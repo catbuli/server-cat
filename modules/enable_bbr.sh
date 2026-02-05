@@ -95,7 +95,7 @@ EOF
 }
 
 function rollback_bbr() {
-    print_step "↩️  恢复 BBR 配置..."
+    print_step "↩️  恢复对 BBR 的修改..."
 
     local sysctl_file="/etc/sysctl.conf"
     local backup_file="$sysctl_file.bbr_backup"
@@ -126,7 +126,7 @@ function rollback_bbr() {
     local current_congestion=$(sysctl -n net.ipv4.tcp_congestion_control)
 
     echo ""
-    print_success "✅ BBR 配置已恢复默认值"
+    print_success "✅ BBR 已恢复默认值"
     print_info "当前配置："
     echo "  • 默认队列调度: $current_qdisc"
     echo "  • 拥塞控制算法: $current_congestion"

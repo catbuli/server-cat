@@ -3,10 +3,12 @@
 MENU_NAME="Nginx"
 MENU_FUNC="install_nginx"
 ROLLBACK_FUNC="rollback_nginx"
+BACKUP_FUNC="backup_nginx"
 PRIORITY=20
 
-SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &> /dev/null && pwd)"
 source "$SCRIPT_DIR/../lib/utils.sh"
+source "$SCRIPT_DIR/../lib/backup_tools.sh"
 
 function install_nginx() {
     echo "======================================"
@@ -57,16 +59,15 @@ function install_nginx() {
 }
 
 function rollback_nginx() {
-    print_step "↩️  恢复 Nginx..."
+    print_step "↩️  卸载 Nginx..."
 
     print_warning "⚠️  此操作将卸载 Nginx 并删除配置文件"
     print_warning "⚠️  /etc/nginx 目录将被删除（如有自定义配置请先备份）"
-    read -p "确认卸载? (输入 YES 继续): " confirm
 
-    if [[ "$confirm" != "YES" ]]; then
+    confirm_strong "YES" "确认卸载" || {
         print_warning "已取消卸载"
         return 0
-    fi
+    }
 
     systemctl stop nginx 2>/dev/null || true
 
@@ -76,7 +77,13 @@ function rollback_nginx() {
     print_success "✅ Nginx 已卸载"
 }
 
-# 如果直接运行此脚本，执行安装
+function backup_nginx() {
+    local temp_dir="$1"
+
+    backup_dir "/etc/nginx" "$temp_dir"
+    backup_dir "/var/www/html" "$temp_dir"
+}
+
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
     install_nginx
 fi

@@ -45,9 +45,8 @@ function rollback_bashtop() {
     print_step "↩️  恢复 Bashtop..."
 
     print_warning "⚠️  此操作将卸载 Bashtop"
-    read -p "确认卸载? (y/n): " confirm
 
-    if [[ "$confirm" =~ ^[Yy]$ ]]; then
+    if confirm "确认卸载"; then
         apt-get remove -y bashtop 2>/dev/null || true
         print_success "✅ Bashtop 已卸载"
     else

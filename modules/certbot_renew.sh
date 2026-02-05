@@ -3,7 +3,12 @@
 MENU_NAME="Certbot 自动续期"
 MENU_FUNC="setup_certbot_renew"
 ROLLBACK_FUNC="rollback_certbot_renew"
+BACKUP_FUNC="backup_certbot_renew"
 PRIORITY=85
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &> /dev/null && pwd)"
+source "$SCRIPT_DIR/../lib/utils.sh"
+source "$SCRIPT_DIR/../lib/backup_tools.sh"
 
 function setup_certbot_renew() {
     SCRIPTS_DIR="$HOME/scripts"
@@ -51,7 +56,7 @@ function setup_certbot_renew() {
 }
 
 function rollback_certbot_renew() {
-    print_step "↩️  恢复证书自动续期配置..."
+    print_step "↩️  恢复对证书续期的修改..."
 
     local RENEW_SCRIPT="$HOME/scripts/certbot-renew.sh"
 
@@ -67,5 +72,16 @@ function rollback_certbot_renew() {
         print_success "✓ 已删除 crontab 任务"
     fi
 
-    print_success "✅ 证书自动续期配置已恢复"
+    print_success "✅ 证书续期配置已恢复"
+}
+
+function backup_certbot_renew() {
+    local temp_dir="$1"
+
+    backup_file "$HOME/scripts/certbot-renew.sh" "$temp_dir"
+
+    if crontab -l 2>/dev/null | grep -q "certbot-renew.sh"; then
+        mkdir -p "$temp_dir"
+        crontab -l 2>/dev/null | grep "certbot-renew.sh" > "$temp_dir/crontab_entry.txt"
+    fi
 }
