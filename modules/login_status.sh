@@ -28,7 +28,7 @@ function deploy_status_script() {
 }
 
 function rollback_status_script() {
-    print_step "↩️  恢复登录状态显示..."
+    print_step "↩️  恢复对登录状态显示的修改..."
 
     if [ -f "$DEPLOY_PATH" ]; then
         rm -f "$DEPLOY_PATH"

@@ -36,7 +36,7 @@ function configure_firewall() {
 }
 
 function rollback_firewall() {
-    print_step "↩️  防火墙清理提示..."
+    print_step "↩️  恢复对防火墙的修改..."
 
     if command -v ufw &> /dev/null; then
         print_warning "⚠️  如需重置防火墙，请手动执行："

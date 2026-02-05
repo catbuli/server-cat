@@ -3,10 +3,12 @@
 MENU_NAME="Docker"
 MENU_FUNC="install_docker"
 ROLLBACK_FUNC="rollback_docker"
+BACKUP_FUNC="backup_docker"
 PRIORITY=10
 
-SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &> /dev/null && pwd)"
 source "$SCRIPT_DIR/../lib/utils.sh"
+source "$SCRIPT_DIR/../lib/backup_tools.sh"
 
 function install_docker() {
     echo "======================================"
@@ -67,12 +69,9 @@ function install_docker() {
     docker --version 2>/dev/null || echo "  • Docker: 已安装"
     docker compose version 2>/dev/null || echo "  • Docker Compose: 已安装"
 
-    # 询问是否配置镜像源
     echo ""
-    print_prompt "是否配置 Docker 镜像加速？[y/N]: "
-    read -p "" setup_mirror
 
-    if [[ "$setup_mirror" =~ ^[Yy]$ ]]; then
+    if confirm "是否配置 Docker 镜像加速" "n"; then
         read -p "请输入镜像地址: " mirror_url
 
         if [ -n "$mirror_url" ]; then
@@ -100,16 +99,15 @@ EOF
 }
 
 function rollback_docker() {
-    print_step "↩️  恢复 Docker..."
+    print_step "↩️  卸载 Docker..."
 
     print_warning "⚠️  此操作将卸载 Docker 及所有相关组件"
     print_warning "⚠️  所有容器、镜像和数据卷将被永久删除！"
-    read -p "确认卸载? (输入 YES 继续): " confirm
 
-    if [[ "$confirm" != "YES" ]]; then
+    confirm_strong "YES" "确认卸载" || {
         print_warning "已取消卸载"
         return 0
-    fi
+    }
 
     if command -v docker &> /dev/null; then
         print_info "停止所有容器..."
@@ -126,14 +124,24 @@ function rollback_docker() {
     rm -f /etc/apt/keyrings/docker.gpg
     rm -f /etc/docker/daemon.json
 
-    # 删除 Docker 数据目录
     rm -rf /var/lib/docker
     rm -rf /var/lib/containerd
 
     print_success "✅ Docker 已完全卸载"
 }
 
-# 如果直接运行此脚本，执行安装
+function backup_docker() {
+    local temp_dir="$1"
+
+    backup_file "/etc/docker/daemon.json" "$temp_dir"
+
+    for compose_file in $HOME/dockers/*/docker-compose.yml $HOME/dockers/*/compose.yaml; do
+        [ -f "$compose_file" ] || continue
+        local compose_dir=$(dirname "$compose_dir")
+        backup_dir "$compose_dir" "$temp_dir/compose"
+    done
+}
+
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
     install_docker
 fi

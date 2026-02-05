@@ -3,10 +3,12 @@
 MENU_NAME="Certbot (SSL证书)"
 MENU_FUNC="install_certbot"
 ROLLBACK_FUNC="rollback_certbot"
+BACKUP_FUNC="backup_certbot"
 PRIORITY=30
 
-SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &> /dev/null && pwd)"
 source "$SCRIPT_DIR/../lib/utils.sh"
+source "$SCRIPT_DIR/../lib/backup_tools.sh"
 source "$SCRIPT_DIR/../modules/certbot_renew.sh"
 
 function install_certbot() {
@@ -65,10 +67,8 @@ function install_certbot() {
     certbot --version 2>/dev/null || echo "  • Certbot: 已安装"
 
     echo ""
-    print_prompt "是否设置定时自动续期任务？[y/N]: "
-    read -p "" setup_renew
 
-    if [[ "$setup_renew" =~ ^[Yy]$ ]]; then
+    if confirm "是否设置定时自动续期任务" "n"; then
         echo ""
         setup_certbot_renew || true
     fi
@@ -86,13 +86,12 @@ function install_certbot() {
 }
 
 function rollback_certbot() {
-    print_step "↩️  恢复 Certbot..."
+    print_step "↩️  卸载 Certbot..."
 
     print_warning "⚠️  此操作将卸载 Certbot"
     print_warning "⚠️  已申请的 SSL 证书将无法自动续期"
-    read -p "确认卸载? (y/n): " confirm
 
-    if [[ "$confirm" =~ ^[Yy]$ ]]; then
+    if confirm "确认卸载"; then
         if snap list certbot &> /dev/null; then
             snap remove --purge certbot
             print_success "✅ Certbot 已卸载"
@@ -102,7 +101,6 @@ function rollback_certbot() {
 
         rm -f /usr/bin/certbot
 
-        # 同时调用 certbot_renew 的恢复
         if declare -f rollback_certbot_renew &> /dev/null; then
             rollback_certbot_renew
         fi
@@ -111,7 +109,12 @@ function rollback_certbot() {
     fi
 }
 
-# 如果直接运行此脚本，执行安装
+function backup_certbot() {
+    local temp_dir="$1"
+
+    backup_dir "/etc/letsencrypt" "$temp_dir"
+}
+
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
     install_certbot
 fi

@@ -24,50 +24,6 @@ function press_enter_to_continue() {
     read
 }
 
-function get_menu_name() {
-    local script="$1"
-    local default_name="$2"
-    # 提取 MENU_NAME 变量的值
-    local name=$(grep "^MENU_NAME=" "$script" 2>/dev/null | head -1 | cut -d'"' -f2)
-    if [[ -z "$name" ]]; then
-        echo "$default_name"
-    else
-        echo "$name"
-    fi
-}
-
-function get_menu_func() {
-    local module="$1"
-    local default_func="$2"
-    # 提取 MENU_FUNC 变量的值
-    local func=$(grep "^MENU_FUNC=" "$module" 2>/dev/null | head -1 | cut -d'"' -f2)
-    if [[ -z "$func" ]]; then
-        echo "$default_func"
-    else
-        echo "$func"
-    fi
-}
-
-function get_rollback_func() {
-    local script="$1"
-    # 提取 ROLLBACK_FUNC 变量的值
-    local func=$(grep "^ROLLBACK_FUNC=" "$script" 2>/dev/null | head -1 | cut -d'"' -f2)
-    if [[ -n "$func" ]]; then
-        echo "$func"
-    fi
-}
-
-function get_priority() {
-    local script="$1"
-    # 提取 PRIORITY 变量的值，默认为 50
-    local priority=$(grep "^PRIORITY=" "$script" 2>/dev/null | head -1 | cut -d'=' -f2)
-    if [[ -z "$priority" ]]; then
-        echo 50
-    else
-        echo "$priority"
-    fi
-}
-
 # 通用菜单项加载函数
 # 参数: $1=目录路径, $2=是否需要 MENU_FUNC (true/false)
 # 返回: 全局数组 menu_funcs, menu_names, menu_priorities
@@ -124,72 +80,109 @@ function load_menu_items() {
     done
 }
 
-function show_software_menu() {
-    # 使用通用加载函数获取菜单项
-    declare -a menu_funcs menu_names menu_priorities
-    load_menu_items "$SOFTWARE_DIR" true
+# 收集指定类型的函数（如 rollback_func）
+# 参数: $1=函数类型(get_rollback_func), $2=输出数组名
+function collect_funcs() {
+    local func_extractor="$1"
+    local -n output_array="$2"
+    declare -a temp_items
 
-    local software_funcs=("${menu_funcs[@]}")
-    local software_names=("${menu_names[@]}")
+    for dir in "$MODULES_DIR" "$SOFTWARE_DIR"; do
+        mapfile -t scripts < <(find "$dir" -maxdepth 1 -type f -name "*.sh" 2>/dev/null)
+        for script in "${scripts[@]}"; do
+            source "$script"
+            local func=$($func_extractor "$script")
+            if [[ -n "$func" ]]; then
+                local name=$(get_menu_name "$script" "$(basename "$script" .sh)")
+                local priority=$(get_priority "$script")
+                temp_items+=("$priority|$func|$name")
+            fi
+        done
+    done
+
+    IFS=$'\n' sorted_items=($(sort -t '|' -k1 -n <<<"${temp_items[*]}"))
+    unset IFS
+
+    for item in "${sorted_items[@]}"; do
+        IFS='|' read -r priority func name <<< "$item"
+        output_array+=("$func|$name")
+    done
+}
+
+function show_generic_menu() {
+    local title="$1"
+    local icon="$2"
+    local dir="$3"
+    local action_verb="$4"
+    local all_verb="$5"
+    local empty_msg="$6"
+    local submenu_func="$7"
+
+    declare -a menu_funcs menu_names menu_priorities
+    load_menu_items "$dir" true
+
+    local item_funcs=("${menu_funcs[@]}")
+    local item_names=("${menu_names[@]}")
 
     while true; do
         clear
         echo -e "${BLUE}=====================================${NC}"
-        echo -e "${BLUE}    📦 安装常用软件               ${NC}"
+        echo -e "${BLUE}    $icon $title                   ${NC}"
         echo -e "${BLUE}=====================================${NC}"
 
-        if [ ${#software_funcs[@]} -eq 0 ]; then
-            print_warning "在 'softwares' 目录中没有找到安装脚本 (.sh)"
+        if [ ${#item_funcs[@]} -eq 0 ]; then
+            print_warning "$empty_msg"
         else
-            echo "1. 全部安装"
+            echo "1. $all_verb"
             local i=2
-            for name in "${software_names[@]}"; do
+            for name in "${item_names[@]}"; do
                 echo "$i. $name"
                 ((i++))
             done
         fi
 
         echo "0. 返回主菜单"
-        echo -e "${BLUE}------------------------------------${NC}"
-        read -p "请输入你的选择 [0-${#software_names[@]}]: " choice
+        echo -e "${BLUE}-------------------------------------${NC}"
+        read -p "请输入你的选择 [0-${#item_names[@]}]: " choice
 
         if [[ "$choice" -eq 0 ]]; then
             break
         elif [[ "$choice" -eq 1 ]]; then
-            # 全部安装
-            print_step "开始全部安装"
+            print_step "开始$all_verb"
             local success_count=0
             local fail_count=0
 
-            for i in "${!software_funcs[@]}"; do
-                local func="${software_funcs[$i]}"
-                local name="${software_names[$i]}"
-                print_step "正在安装: $name"
+            for i in "${!item_funcs[@]}"; do
+                local func="${item_funcs[$i]}"
+                local name="${item_names[$i]}"
+                print_step "正在$action_verb: $name"
 
                 if $func; then
-                    print_success "✓ $name 安装成功"
+                    print_success "✓ $name ${action_verb}成功"
                     ((success_count++))
                 else
-                    print_error "✗ $name 安装失败"
+                    print_error "✗ $name ${action_verb}失败"
                     ((fail_count++))
                 fi
             done
 
             echo ""
-            print_success "安装完成统计："
+            print_success "${action_verb}完成统计："
             echo "  • 成功: $success_count"
             echo "  • 失败: $fail_count"
             press_enter_to_continue
-        elif [[ "$choice" -gt 1 && "$choice" -le $((${#software_names[@]} + 1)) ]]; then
+        elif [[ "$choice" -gt 1 && "$choice" -le $((${#item_names[@]} + 1)) ]]; then
             local idx=$((choice - 2))
-            local func="${software_funcs[$idx]}"
-            local name="${software_names[$idx]}"
-            print_step "正在安装: $name"
+            local func="${item_funcs[$idx]}"
+            local name="${item_names[$idx]}"
+            print_step "正在$action_verb: $name"
 
-            if $func; then
-                print_success "✓ $name 安装成功"
+            if [[ -n "$submenu_func" ]] && [[ "$func" == "$submenu_func" ]]; then
+                $func
+            elif $func; then
+                print_success "✓ $name ${action_verb}成功"
             else
-                print_error "✗ $name 安装失败"
+                print_error "✗ $name ${action_verb}失败"
             fi
             press_enter_to_continue
         else
@@ -199,82 +192,25 @@ function show_software_menu() {
     done
 }
 
+function show_software_menu() {
+    show_generic_menu \
+        "安装常用软件" \
+        "📦" \
+        "$SOFTWARE_DIR" \
+        "安装" \
+        "全部安装" \
+        "在 'softwares' 目录中没有找到安装脚本 (.sh)"
+}
+
 function show_settings_menu() {
-    # 使用通用加载函数获取菜单项
-    declare -a menu_funcs menu_names menu_priorities
-    load_menu_items "$MODULES_DIR" true
-
-    local module_funcs=("${menu_funcs[@]}")
-    local module_names=("${menu_names[@]}")
-
-    while true; do
-        clear
-        echo -e "${BLUE}=====================================${NC}"
-        echo -e "${BLUE}    🔧 常用设置                   ${NC}"
-        echo -e "${BLUE}=====================================${NC}"
-
-        if [ ${#module_funcs[@]} -eq 0 ]; then
-            print_warning "在 'modules' 目录中没有找到配置模块"
-        else
-            echo "1. 全部设置"
-            local i=2
-            for name in "${module_names[@]}"; do
-                echo "$i. $name"
-                ((i++))
-            done
-        fi
-
-        echo "0. 返回主菜单"
-        echo -e "${BLUE}------------------------------------${NC}"
-        read -p "请输入你的选择 [0-${#module_names[@]}]: " choice
-
-        if [[ "$choice" -eq 0 ]]; then
-            break
-        elif [[ "$choice" -eq 1 ]]; then
-            # 全部设置
-            print_step "开始全部设置"
-            local success_count=0
-            local fail_count=0
-
-            for i in "${!module_funcs[@]}"; do
-                local func="${module_funcs[$i]}"
-                local name="${module_names[$i]}"
-                print_step "正在执行: $name"
-
-                if $func; then
-                    print_success "✓ $name 执行成功"
-                    ((success_count++))
-                else
-                    print_error "✗ $name 执行失败"
-                    ((fail_count++))
-                fi
-            done
-
-            echo ""
-            print_success "设置完成统计："
-            echo "  • 成功: $success_count"
-            echo "  • 失败: $fail_count"
-            press_enter_to_continue
-        elif [[ "$choice" -gt 1 && "$choice" -le $((${#module_names[@]} + 1)) ]]; then
-            local idx=$((choice - 2))
-            local func="${module_funcs[$idx]}"
-            local name="${module_names[$idx]}"
-            print_step "正在执行: $name"
-
-            # 备份菜单是子菜单，不显示执行结果
-            if [[ "$func" == "backup_menu" ]]; then
-                $func
-            elif $func; then
-                print_success "✓ $name 执行成功"
-            else
-                print_error "✗ $name 执行失败"
-            fi
-            press_enter_to_continue
-        else
-            print_error "无效输入，请重试"
-            sleep 2
-        fi
-    done
+    show_generic_menu \
+        "常用设置" \
+        "🔧" \
+        "$MODULES_DIR" \
+        "执行" \
+        "全部设置" \
+        "在 'modules' 目录中没有找到配置模块" \
+        "backup_menu"
 }
 
 function show_backup_menu() {
@@ -284,7 +220,6 @@ function show_backup_menu() {
 }
 
 function show_rollback_menu() {
-    # 第一次确认
     clear
     echo -e "${RED}=====================================${NC}"
     echo -e "${RED}    ⚠️  卸载                      ${NC}"
@@ -294,131 +229,81 @@ function show_rollback_menu() {
     print_warning "• 恢复所有配置"
     print_warning "• 删除所有创建的目录和文件"
     echo ""
-    print_prompt "请输入 'CONFIRM' 确认继续: "
-    read -p "" first_confirm
 
-    if [[ "$first_confirm" != "CONFIRM" ]]; then
+    confirm_strong "CONFIRM" "确认继续" || {
         print_warning "已取消卸载"
         press_enter_to_continue
         return 0
-    fi
+    }
 
-    # 第二次确认
     echo ""
     print_warning "⚠️  最后确认！此操作不可逆！"
-    print_prompt "请再次输入 'YES' 确认执行: "
-    read -p "" second_confirm
 
-    if [[ "$second_confirm" != "YES" ]]; then
+    confirm_strong "YES" "最后确认" || {
         print_warning "已取消卸载"
         press_enter_to_continue
         return 0
-    fi
+    }
 
     echo ""
     print_step "开始执行卸载..."
 
-    # 收集所有 rollback 函数 (按优先级排序)
-    declare -a rollback_funcs
-    declare -a rollback_names
-    declare -a temp_items
+    declare -a rollback_items
+    collect_funcs "get_rollback_func" rollback_items
 
-    # 从 modules 中获取
-    mapfile -t modules < <(find "$MODULES_DIR" -maxdepth 1 -type f -name "*.sh" 2>/dev/null)
-    for module in "${modules[@]}"; do
-        source "$module"
-        local func=$(get_rollback_func "$module")
-        if [[ -n "$func" ]]; then
-            local name=$(get_menu_name "$module" "$(basename "$module" .sh)")
-            local priority=$(get_priority "$module")
-            temp_items+=("$priority|$func|$name")
-        fi
-    done
-
-    # 从 softwares 中获取
-    mapfile -t softwares < <(find "$SOFTWARE_DIR" -maxdepth 1 -type f -name "*.sh" 2>/dev/null)
-    for software in "${softwares[@]}"; do
-        source "$software"
-        local func=$(get_rollback_func "$software")
-        if [[ -n "$func" ]]; then
-            local name=$(get_menu_name "$software" "$(basename "$software" .sh)")
-            local priority=$(get_priority "$software")
-            temp_items+=("$priority|$func|$name")
-        fi
-    done
-
-    # 按优先级排序
-    IFS=$'\n' sorted_items=($(sort -t '|' -k1 -n <<<"${temp_items[*]}"))
-    unset IFS
-
-    for item in "${sorted_items[@]}"; do
-        IFS='|' read -r priority func name <<< "$item"
-        rollback_funcs+=("$func")
-        rollback_names+=("$name")
-    done
-
-    # 执行所有 rollback 函数
-    if [ ${#rollback_funcs[@]} -eq 0 ]; then
+    if [ ${#rollback_items[@]} -eq 0 ]; then
         print_warning "没有找到任何卸载函数"
-    else
-        print_info "准备执行 ${#rollback_funcs[@]} 个卸载功能..."
-        echo ""
-
-        # 设置批量执行标志，让 rollback 函数跳过内部确认
-        export ROLLBACK_BATCH_MODE=1
-
-        local success_count=0
-        local fail_count=0
-
-        for i in "${!rollback_funcs[@]}"; do
-            local func="${rollback_funcs[$i]}"
-            local name="${rollback_names[$i]}"
-            print_step "[$((i+1))/${#rollback_funcs[@]}] 恢复: $name"
-
-            if $func; then
-                print_success "✓ $name 卸载成功"
-                ((success_count++))
-            else
-                print_error "✗ $name 卸载失败"
-                ((fail_count++))
-            fi
-            echo ""
-        done
-
-        unset ROLLBACK_BATCH_MODE
-
-        print_success "卸载完成统计："
-        echo "  • 成功: $success_count"
-        echo "  • 失败: $fail_count"
+        press_enter_to_continue
+        return 0
     fi
+
+    print_info "准备执行 ${#rollback_items[@]} 个卸载功能..."
+    echo ""
+
+    export ROLLBACK_BATCH_MODE=1
+    local success_count=0
+    local fail_count=0
+
+    for i in "${!rollback_items[@]}"; do
+        IFS='|' read -r func name <<< "${rollback_items[$i]}"
+        print_step "[$((i+1))/${#rollback_items[@]}] 恢复: $name"
+
+        if $func; then
+            print_success "✓ $name 卸载成功"
+            ((success_count++))
+        else
+            print_error "✗ $name 卸载失败"
+            ((fail_count++))
+        fi
+        echo ""
+    done
+
+    unset ROLLBACK_BATCH_MODE
+
+    print_success "卸载完成统计："
+    echo "  • 成功: $success_count"
+    echo "  • 失败: $fail_count"
 
     press_enter_to_continue
 }
 
 function main_menu() {
-    # 初始化目录和权限
     mkdir -p "$SOFTWARE_DIR" "$MODULES_DIR"
     setup_permissions
 
     while true; do
-        clear
-        echo -e "${GREEN}=====================================${NC}"
-        echo -e "${GREEN}    Ubuntu 24 服务器自动化工具集   ${NC}"
-        echo -e "${GREEN}=====================================${NC}"
-        echo "1. 常用软件"
-        echo "2. 常用设置"
-        echo "3. 数据备份"
-        echo "4. 卸载"
-        echo "5. 退出"
-        echo -e "${GREEN}------------------------------------${NC}"
-        read -p "请输入你的选择 [1-5]: " main_choice
+        local choice=$(show_menu \
+            "Ubuntu 24 服务器自动化工具集" \
+            "${GREEN}" \
+            "常用软件" "常用设置" "数据备份" "卸载" "退出")
 
-        case $main_choice in
+        case $choice in
             1) show_software_menu ;;
             2) show_settings_menu ;;
             3) show_backup_menu ;;
             4) show_rollback_menu ;;
             5) echo ""; print_success "👋 感谢使用，再见！"; exit 0 ;;
+            0) ;;
             *) print_error "无效输入，请重试"; sleep 2 ;;
         esac
     done

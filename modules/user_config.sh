@@ -31,15 +31,14 @@ function create_new_user() {
     print_warning "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     print_warning "是否需要将该用户的 sudo 设置为无需输入密码？"
     print_info "(这样在执行 sudo 命令时不需要输入密码)"
-    read -p "请选择 (y/n): " enable_nopasswd
-    
-    if [[ "$enable_nopasswd" == "y" || "$enable_nopasswd" == "Y" ]]; then
+
+    if confirm "设置 sudo 免密码"; then
         sudoers_file="/etc/sudoers.d/$username"
-        
+
         print_info "正在配置 sudo 免密码..."
         echo "$username ALL=(ALL) NOPASSWD:ALL" > "$sudoers_file"
         chmod 440 "$sudoers_file"
-        
+
         if visudo -c -f "$sudoers_file" &> /dev/null; then
             print_success "✅ sudo 免密码配置成功！"
             print_success "用户 '$username' 现在可以无需密码执行 sudo 命令。"
