@@ -6,10 +6,13 @@ if [[ $EUID -ne 0 ]]; then
    exit 1
 fi
 
-SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
+# 获取脚本真实目录（支持符号链接）
+SCRIPT_SOURCE="$(readlink -f "${BASH_SOURCE[0]}")"
+SCRIPT_DIR="$( cd "$( dirname "$SCRIPT_SOURCE" )" &> /dev/null && pwd )"
 SOFTWARE_DIR="$SCRIPT_DIR/softwares"
 MODULES_DIR="$SCRIPT_DIR/modules"
 BACKUPS_DIR="$SCRIPT_DIR/backups"
+CONFIGS_DIR="$SCRIPT_DIR/configs"
 
 source "$SCRIPT_DIR/lib/utils.sh"
 
@@ -17,6 +20,7 @@ function setup_permissions() {
     chmod +x "$SCRIPT_DIR"/modules/*.sh 2>/dev/null || true
     chmod +x "$SCRIPT_DIR"/softwares/*.sh 2>/dev/null || true
     chmod +x "$SCRIPT_DIR"/backups/*.sh 2>/dev/null || true
+    chmod +x "$SCRIPT_DIR"/configs/*.sh 2>/dev/null || true
 }
 
 function press_enter_to_continue() {
@@ -213,6 +217,50 @@ function show_settings_menu() {
         "backup_menu"
 }
 
+function show_configs_menu() {
+    declare -a menu_funcs menu_names menu_priorities
+    load_menu_items "$CONFIGS_DIR" true
+
+    local item_funcs=("${menu_funcs[@]}")
+    local item_names=("${menu_names[@]}")
+
+    if [ ${#item_funcs[@]} -eq 0 ]; then
+        print_warning "没有找到系统设置脚本"
+        press_enter_to_continue
+        return 0
+    fi
+
+    while true; do
+        clear
+        echo -e "${BLUE}=====================================${NC}"
+        echo -e "${BLUE}    ⚙️  系统设置                 ${NC}"
+        echo -e "${BLUE}=====================================${NC}"
+
+        local i=1
+        for name in "${item_names[@]}"; do
+            echo "$i. $name"
+            ((i++))
+        done
+
+        echo "0. 返回主菜单"
+        echo -e "${BLUE}-------------------------------------${NC}"
+        read -p "请输入你的选择 [0-${#item_names[@]}]: " choice
+
+        if [[ "$choice" -eq 0 ]]; then
+            break
+        elif [[ "$choice" -ge 1 && "$choice" -le ${#item_names[@]} ]]; then
+            local idx=$((choice - 1))
+            local func="${item_funcs[$idx]}"
+            clear
+            $func
+            press_enter_to_continue
+        else
+            print_error "无效输入，请重试"
+            sleep 2
+        fi
+    done
+}
+
 function show_backup_menu() {
     # 调用备份系统的独立菜单
     source "$BACKUPS_DIR/backup_menu.sh"
@@ -288,22 +336,23 @@ function show_rollback_menu() {
 }
 
 function main_menu() {
-    mkdir -p "$SOFTWARE_DIR" "$MODULES_DIR"
+    mkdir -p "$SOFTWARE_DIR" "$MODULES_DIR" "$CONFIGS_DIR"
     setup_permissions
 
     while true; do
         local choice=$(show_menu \
             "Ubuntu 24 服务器自动化工具集" \
             "${GREEN}" \
-            "常用软件" "常用设置" "数据备份" "卸载" "退出")
+            "退出" \
+            "常用软件" "常用设置" "数据备份" "系统设置" "卸载")
 
         case $choice in
             1) show_software_menu ;;
             2) show_settings_menu ;;
             3) show_backup_menu ;;
-            4) show_rollback_menu ;;
-            5) echo ""; print_success "👋 感谢使用，再见！"; exit 0 ;;
-            0) ;;
+            4) show_configs_menu ;;
+            5) show_rollback_menu ;;
+            0) echo ""; print_success "👋 感谢使用，再见！"; exit 0 ;;
             *) print_error "无效输入，请重试"; sleep 2 ;;
         esac
     done

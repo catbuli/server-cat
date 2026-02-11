@@ -84,10 +84,27 @@ confirm_strong() {
     [[ "$response" == "$required" ]]
 }
 
+# 获取实际用户（处理 sudo 情况）
+get_real_user() {
+    if [[ -n "$SUDO_USER" ]]; then
+        echo "$SUDO_USER"
+    else
+        echo "$USER"
+    fi
+}
+
+# 获取实际用户主目录
+get_real_home() {
+    local real_user=$(get_real_user)
+    getent passwd "$real_user" | cut -d: -f6
+}
+
+# 显示菜单
 show_menu() {
     local title="$1"
     local color="$2"
-    shift 2
+    local zero_text="${3:-返回}"
+    shift 3
 
     clear >&2
     echo -e "${color}=====================================${NC}" >&2
@@ -101,7 +118,7 @@ show_menu() {
         ((i++))
     done
 
-    echo "0. 返回" >&2
+    echo "0. $zero_text" >&2
     echo -e "${color}-------------------------------------${NC}" >&2
     read -p "请输入你的选择 [0-$((i-1))]: " choice
 

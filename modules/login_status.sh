@@ -12,14 +12,32 @@ function deploy_status_script() {
     print_step "▶️  部署登录状态显示..."
 
     local source_script="$SCRIPT_DIR/../scripts/motd-server-status.sh"
+    local deploy_dir=$(dirname "$DEPLOY_PATH")
 
     if [ ! -f "$source_script" ]; then
         print_error "源脚本不存在: $source_script"
         return 1
     fi
 
-    cp "$source_script" "$DEPLOY_PATH"
-    chmod +x "$DEPLOY_PATH"
+    if [[ $EUID -ne 0 ]]; then
+        print_error "需要 root 权限才能部署到 $DEPLOY_PATH"
+        return 1
+    fi
+
+    if [ ! -d "$deploy_dir" ]; then
+        print_error "目标目录不存在: $deploy_dir"
+        return 1
+    fi
+
+    if ! cp "$source_script" "$DEPLOY_PATH" 2>/dev/null; then
+        print_error "复制失败: $source_script -> $DEPLOY_PATH"
+        return 1
+    fi
+
+    if ! chmod +x "$DEPLOY_PATH" 2>/dev/null; then
+        print_error "设置执行权限失败: $DEPLOY_PATH"
+        return 1
+    fi
 
     print_success "✅ 已部署到 $DEPLOY_PATH"
     print_info "下次 SSH 登录时将显示服务器状态"
