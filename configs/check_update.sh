@@ -39,12 +39,24 @@ function check_update() {
     fi
 
     print_success "📦 发现 $commit_count 个新提交"
+    echo ""
+    print_info "最新提交："
+    sudo -u "$git_user" git -C "$project_root" log --oneline -5 HEAD.."origin/$current_branch" 2>/dev/null | while read line; do
+        echo "  • $line"
+    done
+    echo ""
 
     if confirm "是否立即更新?" "y"; then
         print_step "正在同步远程版本..."
-        sudo -u "$git_user" git -C "$project_root" fetch origin && \
-        sudo -u "$git_user" git -C "$project_root" reset --hard "origin/$current_branch" && \
-        print_success "✅ 更新成功" || print_error "✗ 更新失败"
+        if sudo -u "$git_user" git -C "$project_root" fetch origin && \
+           sudo -u "$git_user" git -C "$project_root" reset --hard "origin/$current_branch"; then
+            print_success "✅ 更新成功，正在重启..."
+            sleep 1
+            exec "$project_root/main.sh"
+        else
+            print_error "✗ 更新失败"
+            return 1
+        fi
     fi
 
     return 0
