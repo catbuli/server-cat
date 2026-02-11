@@ -1,12 +1,12 @@
 #!/bin/bash
 
-MENU_NAME="开启 BBR 优化"
-MENU_FUNC="enable_bbr"
-ROLLBACK_FUNC="rollback_bbr"
+MENU_NAME="网络优化设置"
+MENU_FUNC="network_optimize"
+ROLLBACK_FUNC="rollback_network"
 PRIORITY=50
 
-function enable_bbr() {
-    print_step "🚀 开启 TCP BBR 拥塞控制算法..."
+function network_optimize() {
+    print_step "🚀 开启网络优化（BBR + ECN）..."
 
     # 检查内核版本
     local kernel_version=$(uname -r | cut -d. -f1-2)
@@ -32,82 +32,76 @@ function enable_bbr() {
 
     # 配置 sysctl
     local sysctl_file="/etc/sysctl.conf"
-    local backup_file="/etc/sysctl.conf.backup.$(date +%Y%m%d_%H%M%S)"
 
-    # 备份原配置
-    if [ -f "$sysctl_file" ] && [ ! -f "$sysctl_file.bbr_backup" ]; then
-        cp "$sysctl_file" "$sysctl_file.bbr_backup"
-        print_info "✓ 已备份原配置到 $sysctl_file.bbr_backup"
+    if [ -f "$sysctl_file" ] && [ ! -f "$sysctl_file.network_backup" ]; then
+        cp "$sysctl_file" "$sysctl_file.network_backup"
+        print_info "✓ 已备份原配置到 $sysctl_file.network_backup"
     fi
 
-    # 移除旧的 BBR 配置（如果存在）
+    # 移除旧的网络优化配置
     sed -i '/net\.core\.default_qdisc=fq/d' "$sysctl_file" 2>/dev/null || true
     sed -i '/net\.ipv4\.tcp_congestion_control=bbr/d' "$sysctl_file" 2>/dev/null || true
+    sed -i '/net\.ipv4\.tcp_ecn=/d' "$sysctl_file" 2>/dev/null || true
+    sed -i '/# 网络优化配置/d' "$sysctl_file" 2>/dev/null || true
 
-    # 添加 BBR 配置
+    # 添加网络优化配置
     cat >> "$sysctl_file" << EOF
 
-# TCP BBR 拥塞控制算法
+# 网络优化配置 (BBR + ECN)
 net.core.default_qdisc=fq
 net.ipv4.tcp_congestion_control=bbr
+net.ipv4.tcp_ecn=1
 EOF
 
     # 应用配置
     sysctl -p > /dev/null 2>&1
     sysctl net.core.default_qdisc=fq > /dev/null 2>&1
     sysctl net.ipv4.tcp_congestion_control=bbr > /dev/null 2>&1
+    sysctl net.ipv4.tcp_ecn=1 > /dev/null 2>&1
 
-    # 验证 BBR 已开启
+    # 验证配置
     local current_qdisc=$(sysctl -n net.core.default_qdisc)
     local current_congestion=$(sysctl -n net.ipv4.tcp_congestion_control)
+    local current_ecn=$(sysctl -n net.ipv4.tcp_ecn)
 
     echo ""
-    print_success "✅ BBR 已开启！"
+    print_success "✅ 网络优化已开启！"
     echo ""
     print_info "📊 当前配置："
-    echo "  • 默认队列调度: $current_qdisc"
-    echo "  • 拥塞控制算法: $current_congestion"
+    echo "  • 队列调度: $current_qdisc"
+    echo "  • 拥塞控制: $current_congestion"
+    echo "  • ECN: $current_ecn"
     echo ""
 
-    # 验证
-    if [[ "$current_congestion" == "bbr" ]]; then
-        print_success "✓ BBR 拥塞控制已生效"
-    else
-        print_warning "⚠ BBR 可能未生效，请重启服务器后验证"
-    fi
-
-    if [[ "$current_qdisc" == "fq" ]]; then
-        print_success "✓ FQ 队列调度已生效"
-    else
-        print_warning "⚠ FQ 队列调度可能未生效"
-    fi
+    [[ "$current_congestion" == "bbr" ]] && print_success "✓ BBR 拥塞控制已生效" || print_warning "⚠ BBR 可能未生效"
+    [[ "$current_qdisc" == "fq" ]] && print_success "✓ FQ 队列调度已生效" || print_warning "⚠ FQ 可能未生效"
+    [[ "$current_ecn" == "1" ]] && print_success "✓ ECN 已启用" || print_warning "⚠ ECN 可能未生效"
 
     echo ""
     print_info "📝 验证命令："
     echo "  sysctl net.core.default_qdisc"
     echo "  sysctl net.ipv4.tcp_congestion_control"
-    echo ""
-    print_info "📝 如需恢复默认配置，请运行："
-    echo "  sudo cp /etc/sysctl.conf.bbr_backup /etc/sysctl.conf"
-    echo "  sudo sysctl -p"
+    echo "  sysctl net.ipv4.tcp_ecn"
 
     return 0
 }
 
-function rollback_bbr() {
-    print_step "↩️  恢复对 BBR 的修改..."
+function rollback_network() {
+    print_step "↩️  恢复网络优化设置..."
 
     local sysctl_file="/etc/sysctl.conf"
-    local backup_file="$sysctl_file.bbr_backup"
     local modules_file="/etc/modules-load.d/bbr.conf"
 
-    # 移除 BBR 配置
+    # 移除网络优化配置
     sed -i '/net\.core\.default_qdisc=fq/d' "$sysctl_file" 2>/dev/null || true
     sed -i '/net\.ipv4\.tcp_congestion_control=bbr/d' "$sysctl_file" 2>/dev/null || true
+    sed -i '/net\.ipv4\.tcp_ecn=/d' "$sysctl_file" 2>/dev/null || true
+    sed -i '/# 网络优化配置/d' "$sysctl_file" 2>/dev/null || true
 
-    # 恢复备份配置（如果存在）
-    if [ -f "$backup_file" ]; then
-        cp "$backup_file" "$sysctl_file"
+    # 恢复备份配置
+    if [ -f "$sysctl_file.network_backup" ]; then
+        cp "$sysctl_file.network_backup" "$sysctl_file"
+        rm -f "$sysctl_file.network_backup"
         print_info "✓ 已恢复 sysctl 配置"
     fi
 
@@ -117,6 +111,7 @@ function rollback_bbr() {
     # 应用默认配置
     sysctl net.core.default_qdisc=fq_codel > /dev/null 2>&1
     sysctl net.ipv4.tcp_congestion_control=cubic > /dev/null 2>&1
+    sysctl net.ipv4.tcp_ecn=0 > /dev/null 2>&1
 
     # 卸载 BBR 模块
     modprobe -r tcp_bbr 2>/dev/null || true
@@ -124,12 +119,14 @@ function rollback_bbr() {
     # 显示当前配置
     local current_qdisc=$(sysctl -n net.core.default_qdisc)
     local current_congestion=$(sysctl -n net.ipv4.tcp_congestion_control)
+    local current_ecn=$(sysctl -n net.ipv4.tcp_ecn)
 
     echo ""
-    print_success "✅ BBR 已恢复默认值"
+    print_success "✅ 网络优化已恢复默认值"
     print_info "当前配置："
-    echo "  • 默认队列调度: $current_qdisc"
-    echo "  • 拥塞控制算法: $current_congestion"
+    echo "  • 队列调度: $current_qdisc"
+    echo "  • 拥塞控制: $current_congestion"
+    echo "  • ECN: $current_ecn"
 
     return 0
 }
