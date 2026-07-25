@@ -68,6 +68,17 @@ sudo scat agent status
 
 Agent 默认不启用邮件和定时运行。监控阈值位于 `/etc/server-cat/agent.toml`，SMTP 连接信息位于 `/etc/server-cat/smtp.env`。完成本机配置后，执行 `sudo scat agent enable` 启用定时监控。
 
+可选的 `[checks]` 配置可巡检 systemd 服务和 HTTP/HTTPS 地址：
+
+```toml
+[checks]
+systemd_services = ["nginx", "docker"]
+http_urls = ["https://example.com/health"]
+http_timeout_seconds = 10
+```
+
+服务未处于 `active`、HTTP 非成功响应、超时或连接失败会产生严重告警。
+
 `server-cat` 仍保留为兼容命令，新脚本和日常操作统一使用 `scat`。
 
 安装后重新打开 Bash，即可使用 `scat` 的 Tab 补全；当前终端可执行 `source /usr/share/bash-completion/completions/scat` 立即加载。

@@ -8,7 +8,7 @@ use std::env;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::process::ExitCode;
+use std::process::{Command, ExitCode};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const DEFAULT_CONFIG_PATH: &str = "/etc/server-cat/agent.toml";
@@ -20,6 +20,8 @@ struct Config {
     schedule: ScheduleConfig,
     thresholds: ThresholdConfig,
     email: EmailConfig,
+    #[serde(default)]
+    checks: CheckConfig,
 }
 
 #[derive(Debug, Deserialize)]
@@ -49,6 +51,30 @@ struct EmailConfig {
     from: String,
     recipients: Vec<String>,
     reminder_hours: u64,
+}
+
+#[derive(Debug, Deserialize)]
+struct CheckConfig {
+    #[serde(default)]
+    systemd_services: Vec<String>,
+    #[serde(default)]
+    http_urls: Vec<String>,
+    #[serde(default = "default_http_timeout_seconds")]
+    http_timeout_seconds: u64,
+}
+
+impl Default for CheckConfig {
+    fn default() -> Self {
+        Self {
+            systemd_services: Vec::new(),
+            http_urls: Vec::new(),
+            http_timeout_seconds: default_http_timeout_seconds(),
+        }
+    }
+}
+
+fn default_http_timeout_seconds() -> u64 {
+    10
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -257,7 +283,49 @@ fn validate_config(config: &Config) -> Result<(), String> {
         }
     }
 
+    if config.checks.http_timeout_seconds == 0 || config.checks.http_timeout_seconds > 300 {
+        return Err("checks.http_timeout_seconds 必须在 1 到 300 之间".to_owned());
+    }
+
+    validate_unique_values(&config.checks.systemd_services, "checks.systemd_services")?;
+    for service in &config.checks.systemd_services {
+        if !is_valid_systemd_service_name(service) {
+            return Err(format!("checks.systemd_services 包含无效服务名: {service}"));
+        }
+    }
+
+    validate_unique_values(&config.checks.http_urls, "checks.http_urls")?;
+    for url in &config.checks.http_urls {
+        if !is_valid_http_url(url) {
+            return Err(format!("checks.http_urls 包含无效地址: {url}"));
+        }
+    }
+
     Ok(())
+}
+
+fn validate_unique_values(values: &[String], name: &str) -> Result<(), String> {
+    let mut seen = HashSet::new();
+    for value in values {
+        if value.trim().is_empty() || !seen.insert(value) {
+            return Err(format!("{name} 不能包含空值或重复项"));
+        }
+    }
+
+    Ok(())
+}
+
+fn is_valid_systemd_service_name(name: &str) -> bool {
+    !name.is_empty()
+        && name
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || "@_.-".contains(character))
+}
+
+fn is_valid_http_url(url: &str) -> bool {
+    (url.starts_with("https://") || url.starts_with("http://"))
+        && !url.contains('@')
+        && !url.chars().any(char::is_whitespace)
 }
 
 fn validate_percent_pair(name: &str, warning: u8, critical: u8) -> Result<(), String> {
@@ -441,7 +509,72 @@ fn collect_alerts(config: &Config) -> Result<Vec<DetectedAlert>, String> {
         });
     }
 
+    for service in &config.checks.systemd_services {
+        if !systemd_service_is_active(service)? {
+            alerts.push(DetectedAlert {
+                key: format!("systemd:{service}"),
+                level: AlertLevel::Critical,
+                label: format!("systemd 服务 {service}"),
+                message: format!("systemd 服务 {service} 未处于 active 状态"),
+            });
+        }
+    }
+
+    for url in &config.checks.http_urls {
+        if let Some(reason) = probe_http_url(url, config.checks.http_timeout_seconds)? {
+            alerts.push(DetectedAlert {
+                key: format!("http:{url}"),
+                level: AlertLevel::Critical,
+                label: format!("HTTP {url}"),
+                message: format!("HTTP 探活失败: {url}，{reason}"),
+            });
+        }
+    }
+
     Ok(alerts)
+}
+
+fn systemd_service_is_active(service: &str) -> Result<bool, String> {
+    Command::new("systemctl")
+        .args(["is-active", "--quiet", service])
+        .status()
+        .map(|status| status.success())
+        .map_err(|error| format!("无法检查 systemd 服务 {service}: {error}"))
+}
+
+fn probe_http_url(url: &str, timeout_seconds: u64) -> Result<Option<String>, String> {
+    let timeout = timeout_seconds.to_string();
+    let output = Command::new("curl")
+        .args([
+            "--fail",
+            "--silent",
+            "--show-error",
+            "--location",
+            "--max-time",
+            &timeout,
+            "--output",
+            "/dev/null",
+            "--write-out",
+            "%{http_code}",
+            url,
+        ])
+        .output()
+        .map_err(|error| format!("无法执行 HTTP 探活 curl: {error}"))?;
+
+    if output.status.success() {
+        return Ok(None);
+    }
+
+    let status_code = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+    let error_output = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+    let reason = match (status_code.as_str(), error_output.as_str()) {
+        ("" | "000", "") => "连接失败或请求超时".to_owned(),
+        ("" | "000", error) => error.to_owned(),
+        (status, "") => format!("HTTP 状态码 {status}"),
+        (status, error) => format!("HTTP 状态码 {status}: {error}"),
+    };
+
+    Ok(Some(reason))
 }
 
 fn monitored_mount_points() -> Result<Vec<PathBuf>, String> {
@@ -837,6 +970,36 @@ reminder_hours = 6
     fn accepts_valid_configuration() {
         let config: Config = toml::from_str(VALID_CONFIG).expect("configuration parses");
         assert!(validate_config(&config).is_ok());
+        assert!(config.checks.systemd_services.is_empty());
+        assert!(config.checks.http_urls.is_empty());
+        assert_eq!(config.checks.http_timeout_seconds, 10);
+    }
+
+    #[test]
+    fn accepts_valid_service_and_http_checks() {
+        let configuration = format!(
+            "{VALID_CONFIG}\n[checks]\nsystemd_services = [\"nginx\"]\nhttp_urls = [\"https://example.com/health\"]\nhttp_timeout_seconds = 10\n"
+        );
+        let config: Config = toml::from_str(&configuration).expect("configuration parses");
+        assert!(validate_config(&config).is_ok());
+    }
+
+    #[test]
+    fn rejects_invalid_check_entries() {
+        let invalid_service = format!(
+            "{VALID_CONFIG}\n[checks]\nsystemd_services = [\"nginx;rm\"]\nhttp_urls = []\nhttp_timeout_seconds = 10\n"
+        );
+        let invalid_url = format!(
+            "{VALID_CONFIG}\n[checks]\nsystemd_services = []\nhttp_urls = [\"ftp://example.com\"]\nhttp_timeout_seconds = 10\n"
+        );
+        let duplicate_service = format!(
+            "{VALID_CONFIG}\n[checks]\nsystemd_services = [\"nginx\", \"nginx\"]\nhttp_urls = []\nhttp_timeout_seconds = 10\n"
+        );
+
+        for configuration in [invalid_service, invalid_url, duplicate_service] {
+            let config: Config = toml::from_str(&configuration).expect("configuration parses");
+            assert!(validate_config(&config).is_err());
+        }
     }
 
     #[test]

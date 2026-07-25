@@ -18,3 +18,9 @@ enabled = false
 from = ""
 recipients = []
 reminder_hours = 6
+
+# 可选：留空时不检查额外服务。
+[checks]
+systemd_services = []
+http_urls = []
+http_timeout_seconds = 10
