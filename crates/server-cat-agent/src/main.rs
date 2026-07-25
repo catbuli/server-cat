@@ -609,6 +609,8 @@ fn run_check(config: &Config, scheduled: bool) -> Result<(), String> {
     let telegram_reminder_seconds = config.telegram.reminder_hours.saturating_mul(3600);
     let active_keys: HashSet<String> = alerts.iter().map(|alert| alert.key.clone()).collect();
     let mut notification_errors = Vec::new();
+    let mut telegram_alert_keys = Vec::new();
+    let mut telegram_alert_entries = Vec::new();
 
     for alert in alerts {
         let previous = state.alerts.get(&alert.key).cloned();
@@ -649,21 +651,10 @@ fn run_check(config: &Config, scheduled: bool) -> Result<(), String> {
         } else {
             false
         };
-        let telegram_sent = if should_telegram {
-            match send_telegram(
-                config,
-                &format!("Server Cat {}告警: {}", alert.level.label(), alert.label),
-                &format!("主机: {hostname}\n时间: {now}\n\n{}\n", alert.message),
-            ) {
-                Ok(()) => true,
-                Err(error) => {
-                    notification_errors.push(format!("Telegram 告警 {}: {error}", alert.label));
-                    false
-                }
-            }
-        } else {
-            false
-        };
+        if should_telegram {
+            telegram_alert_keys.push(alert.key.clone());
+            telegram_alert_entries.push(format!("- [{}] {}", alert.level.label(), alert.message));
+        }
 
         let last_sent_unix = if email_sent {
             Some(now)
@@ -672,13 +663,9 @@ fn run_check(config: &Config, scheduled: bool) -> Result<(), String> {
                 .as_ref()
                 .and_then(|previous| previous.last_sent_unix)
         };
-        let last_telegram_sent_unix = if telegram_sent {
-            Some(now)
-        } else {
-            previous
-                .as_ref()
-                .and_then(|previous| previous.last_telegram_sent_unix)
-        };
+        let last_telegram_sent_unix = previous
+            .as_ref()
+            .and_then(|previous| previous.last_telegram_sent_unix);
         let alert_key = alert.key.clone();
         let active_alert = active_alert_from_detection(
             alert,
@@ -690,6 +677,21 @@ fn run_check(config: &Config, scheduled: bool) -> Result<(), String> {
         state.alerts.insert(alert_key, active_alert);
     }
 
+    if !telegram_alert_entries.is_empty() {
+        let (subject, body) =
+            format_telegram_summary("告警", &hostname, now, &telegram_alert_entries);
+        match send_telegram(config, &subject, &body) {
+            Ok(()) => {
+                for key in telegram_alert_keys {
+                    if let Some(alert) = state.alerts.get_mut(&key) {
+                        alert.last_telegram_sent_unix = Some(now);
+                    }
+                }
+            }
+            Err(error) => notification_errors.push(format!("Telegram 告警汇总: {error}")),
+        }
+    }
+
     let recovered_keys: Vec<String> = state
         .alerts
         .keys()
@@ -697,13 +699,16 @@ fn run_check(config: &Config, scheduled: bool) -> Result<(), String> {
         .cloned()
         .collect();
 
+    let telegram_recovery_required = config.telegram.enabled && !notifications_muted;
+    let mut recovery_results = Vec::new();
+    let mut telegram_recovery_entries = Vec::new();
     for key in recovered_keys {
         let previous = state
             .alerts
             .get(&key)
             .cloned()
             .ok_or_else(|| "告警状态读取失败".to_owned())?;
-        let mut recovery_sent = true;
+        let mut email_recovery_sent = true;
         if let Some(settings) = smtp.as_ref()
             && let Err(error) = send_email(
                 settings,
@@ -716,23 +721,32 @@ fn run_check(config: &Config, scheduled: bool) -> Result<(), String> {
             )
         {
             notification_errors.push(format!("邮件恢复通知 {}: {error}", previous.label));
-            recovery_sent = false;
+            email_recovery_sent = false;
         }
-        if config.telegram.enabled
-            && !notifications_muted
-            && let Err(error) = send_telegram(
-                config,
-                &format!("Server Cat 告警恢复: {}", previous.label),
-                &format!(
-                    "主机: {hostname}\n时间: {now}\n\n{} 已恢复正常。\n上次告警: {}\n",
-                    previous.label, previous.message
-                ),
-            )
-        {
-            notification_errors.push(format!("Telegram 恢复通知 {}: {error}", previous.label));
-            recovery_sent = false;
+        if telegram_recovery_required {
+            telegram_recovery_entries.push(format!(
+                "- {} 已恢复正常（上次告警: {}）",
+                previous.label, previous.message
+            ));
         }
-        if recovery_sent {
+        recovery_results.push((key, email_recovery_sent));
+    }
+
+    let telegram_recovery_sent = if telegram_recovery_entries.is_empty() {
+        true
+    } else {
+        let (subject, body) =
+            format_telegram_summary("恢复通知", &hostname, now, &telegram_recovery_entries);
+        match send_telegram(config, &subject, &body) {
+            Ok(()) => true,
+            Err(error) => {
+                notification_errors.push(format!("Telegram 恢复通知汇总: {error}"));
+                false
+            }
+        }
+    };
+    for (key, email_recovery_sent) in recovery_results {
+        if email_recovery_sent && telegram_recovery_sent {
             state.alerts.remove(&key);
         }
     }
@@ -1616,22 +1630,49 @@ fn send_email(
 }
 
 fn send_telegram(config: &Config, subject: &str, body: &str) -> Result<(), String> {
-    let message = format_telegram_message(subject, body);
+    let messages = split_telegram_messages(subject, body);
     for chat_id in &config.telegram.chat_ids {
-        send_telegram_message(&config.telegram.bot_token, chat_id, &message)?;
+        for message in &messages {
+            send_telegram_message(&config.telegram.bot_token, chat_id, message)?;
+        }
     }
     Ok(())
 }
 
-fn format_telegram_message(subject: &str, body: &str) -> String {
-    let message = format!("{subject}\n\n{}", body.trim());
-    let mut characters = message.chars();
-    let truncated: String = characters.by_ref().take(4093).collect();
-    if characters.next().is_some() {
-        format!("{truncated}...")
-    } else {
-        truncated
+fn format_telegram_summary(
+    kind: &str,
+    hostname: &str,
+    now: u64,
+    entries: &[String],
+) -> (String, String) {
+    (
+        format!("Server Cat {kind}汇总: {} 项", entries.len()),
+        format!("主机: {hostname}\n时间: {now}\n\n{}", entries.join("\n")),
+    )
+}
+
+fn split_telegram_messages(subject: &str, body: &str) -> Vec<String> {
+    const TELEGRAM_MESSAGE_LIMIT: usize = 4096;
+
+    let message: Vec<char> = format!("{subject}\n\n{}", body.trim()).chars().collect();
+    let mut messages = Vec::new();
+    let mut start = 0;
+
+    while start < message.len() {
+        let mut end = (start + TELEGRAM_MESSAGE_LIMIT).min(message.len());
+        if end < message.len()
+            && let Some(newline) = message[start..end]
+                .iter()
+                .rposition(|character| *character == '\n')
+            && newline > 0
+        {
+            end = start + newline + 1;
+        }
+        messages.push(message[start..end].iter().collect());
+        start = end;
     }
+
+    messages
 }
 
 fn send_telegram_message(bot_token: &str, chat_id: &str, message: &str) -> Result<(), String> {
@@ -2113,16 +2154,34 @@ smtp_password = ""
     }
 
     #[test]
-    fn telegram_message_is_plain_text_and_limited_to_api_length() {
+    fn telegram_message_is_plain_text_and_split_without_data_loss() {
         assert_eq!(
-            format_telegram_message("Server Cat 告警", "磁盘空间不足\n"),
-            "Server Cat 告警\n\n磁盘空间不足"
+            split_telegram_messages("Server Cat 告警", "磁盘空间不足\n"),
+            vec!["Server Cat 告警\n\n磁盘空间不足"]
         );
+        let expected = format!("告警\n\n{}", "测".repeat(5000));
+        let messages = split_telegram_messages("告警", &"测".repeat(5000));
+        assert!(messages.len() > 1);
+        assert!(
+            messages
+                .iter()
+                .all(|message| message.chars().count() <= 4096)
+        );
+        assert_eq!(messages.concat(), expected);
+    }
+
+    #[test]
+    fn telegram_summary_contains_every_entry() {
+        let entries = vec![
+            "- [严重] Nginx 未运行".to_owned(),
+            "- [警告] 磁盘使用率过高".to_owned(),
+        ];
+        let (subject, body) = format_telegram_summary("告警", "server-1", 100, &entries);
+
+        assert_eq!(subject, "Server Cat 告警汇总: 2 项");
         assert_eq!(
-            format_telegram_message("告警", &"x".repeat(5000))
-                .chars()
-                .count(),
-            4096
+            body,
+            "主机: server-1\n时间: 100\n\n- [严重] Nginx 未运行\n- [警告] 磁盘使用率过高"
         );
     }
 

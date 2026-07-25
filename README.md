@@ -108,6 +108,8 @@ reminder_hours = 6
 
 Telegram Bot Token 由 Telegram 的 `@BotFather` 创建 Bot 后获得；`chat_ids` 可填写个人或群组的数字 Chat ID，也可填写 Bot 有权发消息的 `@channel`。Bot 必须已加入目标群组或频道并具备发消息权限。
 
+同一轮巡检产生的 Telegram 告警会合并发送，恢复通知单独合并；消息超过 Telegram 限制时会自动拆分，避免多项异常连续刷屏。
+
 启用通知后，应分别发送测试消息确认 SMTP、Telegram Bot 与接收目标可用；测试命令不会创建或更新告警状态：
 
 ```bash
