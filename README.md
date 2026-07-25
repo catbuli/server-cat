@@ -43,30 +43,32 @@ curl -fsSL https://packages.catbuli.com/server-cat/install.sh | sudo bash
 安装完成后查看可用命令：
 
 ```bash
-sudo server-cat --help
+sudo scat --help
 ```
 
 ## 常用操作
 
 ```bash
 # 打开交互式管理菜单
-sudo server-cat
+sudo scat
 
 # 检查、安装或回退已签名更新
-sudo server-cat update check
-sudo server-cat update apply
-sudo server-cat update rollback <版本>
+sudo scat update check
+sudo scat update apply
+sudo scat update rollback <版本>
 
 # 管理本地监控 Agent
-sudo server-cat agent check
-sudo server-cat agent enable
-sudo server-cat agent disable
-sudo server-cat agent status
+sudo scat agent check
+sudo scat agent enable
+sudo scat agent disable
+sudo scat agent status
 ```
 
 ## 监控与邮件
 
-Agent 默认不启用邮件和定时运行。监控阈值位于 `/etc/server-cat/agent.toml`，SMTP 连接信息位于 `/etc/server-cat/smtp.env`。完成本机配置后，执行 `sudo server-cat agent enable` 启用定时监控。
+Agent 默认不启用邮件和定时运行。监控阈值位于 `/etc/server-cat/agent.toml`，SMTP 连接信息位于 `/etc/server-cat/smtp.env`。完成本机配置后，执行 `sudo scat agent enable` 启用定时监控。
+
+`server-cat` 仍保留为兼容命令，新脚本和日常操作统一使用 `scat`。
 
 ## 更新与信任
 

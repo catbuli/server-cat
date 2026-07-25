@@ -329,11 +329,13 @@ server_cat_update_apply() {
     ln -s "releases/$version" "$install_root/.current.new"
     mv -Tf "$install_root/.current.new" "$current_link"
     install -d -m 0755 /usr/local/sbin /etc/server-cat
-    cat > /usr/local/sbin/server-cat <<'EOF'
+    for command_name in scat server-cat; do
+        cat > "/usr/local/sbin/$command_name" <<'EOF'
 #!/bin/bash
 exec /opt/server-cat/current/main.sh "$@"
 EOF
-    chmod 0755 /usr/local/sbin/server-cat
+        chmod 0755 "/usr/local/sbin/$command_name"
+    done
     if [[ ! -f /etc/server-cat/agent.toml ]]; then
         install -m 0644 "$release_dir/configs/agent.toml.example" /etc/server-cat/agent.toml
     fi

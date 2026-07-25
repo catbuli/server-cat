@@ -140,6 +140,8 @@ assert_not_contains "configs/check_update.sh" 'reset --hard' "自更新不强制
 assert_not_contains "configs/check_update.sh" 'git -C' "生产更新不再依赖 Git 仓库"
 assert_contains_literal "configs/check_update.sh" 'server_cat_update_check' "菜单检查更新复用签名发布源"
 assert_contains_literal "main.sh" 'dispatch_command "$@"' "主入口在菜单前分发子命令"
+assert_contains_literal "packaging/install.sh" 'for command_name in scat server-cat' "首次安装提供 scat 与兼容命令"
+assert_contains_literal "lib/release.sh" 'for command_name in scat server-cat' "更新安装提供 scat 与兼容命令"
 assert_contains_literal "lib/release.sh" 'gpgv --keyring' "更新检查使用独立公钥验证签名"
 assert_contains_literal "lib/release.sh" "--proto '=https'" "更新检查仅允许 HTTPS 发布源"
 assert_contains "lib/backup_tools.sh" 'get_real_home' "默认备份目录使用实际用户主目录"

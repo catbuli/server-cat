@@ -134,11 +134,13 @@ if [[ ! -f /etc/server-cat/smtp.env ]]; then
 fi
 install -m 0644 "$INSTALL_ROOT/current/systemd/server-cat-agent.service" /etc/systemd/system/server-cat-agent.service
 install -m 0644 "$INSTALL_ROOT/current/systemd/server-cat-agent.timer" /etc/systemd/system/server-cat-agent.timer
-cat > /usr/local/sbin/server-cat <<'EOF'
+for command_name in scat server-cat; do
+    cat > "/usr/local/sbin/$command_name" <<'EOF'
 #!/bin/bash
 exec /opt/server-cat/current/main.sh "$@"
 EOF
-chmod 0755 /usr/local/sbin/server-cat
+    chmod 0755 "/usr/local/sbin/$command_name"
+done
 systemctl daemon-reload
 "$INSTALL_ROOT/current/server-cat-agent" validate-config --config /etc/server-cat/agent.toml
 printf '配置文件格式和阈值校验通过: /etc/server-cat/agent.toml\n'
