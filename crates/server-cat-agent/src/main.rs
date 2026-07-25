@@ -66,14 +66,14 @@ fn run(arguments: Vec<String>) -> Result<(), String> {
             let config_path = parse_config_path(&arguments[1..])?;
             let config = load_config(&config_path)?;
             validate_config(&config)?;
-            println!("配置有效: {config_path}");
+            println!("配置文件格式和阈值校验通过: {config_path}");
             Ok(())
         }
         "check" => {
             let config_path = parse_config_path(&arguments[1..])?;
             let config = load_config(&config_path)?;
             validate_config(&config)?;
-            println!("配置有效，监控检查功能尚未发布: {config_path}");
+            println!("配置文件格式和阈值校验通过；监控检查功能尚未发布: {config_path}");
             Ok(())
         }
         "version" | "--version" | "-V" => {
