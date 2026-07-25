@@ -5,11 +5,9 @@ MENU_NAME=""
 MENU_FUNC="do_create_backup"
 ROLLBACK_FUNC=""
 
-set -eo pipefail
-
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &> /dev/null && pwd)"
-source "$SCRIPT_DIR/../lib/utils.sh"
-source "$SCRIPT_DIR/../lib/backup_tools.sh"
+BACKUPS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &> /dev/null && pwd)"
+source "$BACKUPS_DIR/../lib/utils.sh"
+source "$BACKUPS_DIR/../lib/backup_tools.sh"
 
 function do_create_backup() {
     local timestamp=$(get_timestamp)
@@ -19,16 +17,27 @@ function do_create_backup() {
 
     cleanup_temp
     init_backup_dirs
-    mkdir -p "$temp_dir"
+    if ! mkdir -p "$temp_dir"; then
+        print_error "无法创建临时备份目录: $temp_dir"
+        return 1
+    fi
 
     print_info "备份时间: $(date '+%Y-%m-%d %H:%M:%S')"
 
     # 收集所有模块的备份项
     print_info "收集备份文件..."
-    collect_backup_items "$temp_dir" "$temp_dir/manifest.json"
+    if ! collect_backup_items "$temp_dir"; then
+        print_error "收集备份文件失败"
+        cleanup_temp
+        return 1
+    fi
 
     # 创建清单文件
-    create_backup_manifest "$temp_dir"
+    if ! create_backup_manifest "$temp_dir"; then
+        print_error "创建备份清单失败"
+        cleanup_temp
+        return 1
+    fi
 
     # 创建压缩包
     print_info "创建归档文件..."

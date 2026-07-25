@@ -6,45 +6,48 @@ ROLLBACK_FUNC="rollback_certbot_renew"
 BACKUP_FUNC="backup_certbot_renew"
 PRIORITY=85
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &> /dev/null && pwd)"
-source "$SCRIPT_DIR/../lib/utils.sh"
-source "$SCRIPT_DIR/../lib/backup_tools.sh"
+MODULES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &> /dev/null && pwd)"
+source "$MODULES_DIR/../lib/utils.sh"
+source "$MODULES_DIR/../lib/backup_tools.sh"
 
 function setup_certbot_renew() {
-    SCRIPTS_DIR="$HOME/scripts"
-    RENEW_SCRIPT="$SCRIPTS_DIR/certbot-renew.sh"
+    local user_home="${HOME_DIR:-$(get_real_home)}"
+    local scripts_dir="$user_home/scripts"
+    local renew_script="$scripts_dir/certbot-renew.sh"
+    local source_script
+    local cron_job
 
     # 检测源脚本路径
     if [[ -n "${SERVER_CAT_ROOT:-}" ]]; then
-        SOURCE_SCRIPT="$SERVER_CAT_ROOT/scripts/certbot-renew.sh"
+        source_script="$SERVER_CAT_ROOT/scripts/certbot-renew.sh"
     else
-        SOURCE_SCRIPT="$(dirname "${BASH_SOURCE[0]}")/../scripts/certbot-renew.sh"
+        source_script="$MODULES_DIR/../scripts/certbot-renew.sh"
     fi
 
     print_step "📅 设置证书自动续期任务..."
 
     # 创建 scripts 目录
-    mkdir -p "$SCRIPTS_DIR"
+    mkdir -p "$scripts_dir"
 
     # 复制续期脚本
-    if [ -f "$SOURCE_SCRIPT" ]; then
-        cp "$SOURCE_SCRIPT" "$RENEW_SCRIPT"
-        chmod +x "$RENEW_SCRIPT"
-        print_success "✓ 已安装续期脚本到 $RENEW_SCRIPT"
+    if [ -f "$source_script" ]; then
+        cp "$source_script" "$renew_script"
+        chmod +x "$renew_script"
+        print_success "✓ 已安装续期脚本到 $renew_script"
     else
-        print_error "✗ 找不到源脚本: $SOURCE_SCRIPT"
+        print_error "✗ 找不到源脚本: $source_script"
         return 1
     fi
 
     # 设置 crontab (每周日凌晨 3 点执行)
-    CRON_JOB="0 3 * * 0 $RENEW_SCRIPT >/dev/null 2>&1"
+    cron_job="0 3 * * 0 $renew_script >/dev/null 2>&1"
 
     # 检查 crontab 中是否已存在该任务
     if crontab -l 2>/dev/null | grep -q "certbot-renew.sh"; then
         print_info "✓ crontab 任务已存在"
     else
         # 添加到 crontab
-        (crontab -l 2>/dev/null; echo "$CRON_JOB") | crontab -
+        (crontab -l 2>/dev/null; echo "$cron_job") | crontab -
         print_success "✓ 已添加 crontab 任务 (每周日凌晨 3 点执行)"
     fi
 
@@ -58,11 +61,11 @@ function setup_certbot_renew() {
 function rollback_certbot_renew() {
     print_step "↩️  恢复对证书续期的修改..."
 
-    local RENEW_SCRIPT="$HOME/scripts/certbot-renew.sh"
+    local renew_script="${HOME_DIR:-$(get_real_home)}/scripts/certbot-renew.sh"
 
     # 删除续期脚本
-    if [ -f "$RENEW_SCRIPT" ]; then
-        rm -f "$RENEW_SCRIPT"
+    if [ -f "$renew_script" ]; then
+        rm -f "$renew_script"
         print_success "✓ 已删除续期脚本"
     fi
 
@@ -77,8 +80,9 @@ function rollback_certbot_renew() {
 
 function backup_certbot_renew() {
     local temp_dir="$1"
+    local user_home="${HOME_DIR:-$(get_real_home)}"
 
-    backup_file "$HOME/scripts/certbot-renew.sh" "$temp_dir"
+    backup_file "$user_home/scripts/certbot-renew.sh" "$temp_dir"
 
     if crontab -l 2>/dev/null | grep -q "certbot-renew.sh"; then
         mkdir -p "$temp_dir"

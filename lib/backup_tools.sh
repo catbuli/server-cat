@@ -1,10 +1,11 @@
 #!/bin/bash
 # 备份系统通用函数库
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &> /dev/null && pwd)"
-source "$SCRIPT_DIR/utils.sh"
+BACKUP_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &> /dev/null && pwd)"
+SERVER_CAT_ROOT="$(cd "$BACKUP_LIB_DIR/.." && pwd)"
+source "$BACKUP_LIB_DIR/utils.sh"
 
-BACKUP_ROOT="${BACKUP_ROOT:-$HOME/backups}"
+BACKUP_ROOT="${BACKUP_ROOT:-$(get_real_home)/backups}"
 
 backup_file() {
     local src="$1"
@@ -50,8 +51,8 @@ function collect_backup_items() {
     mkdir -p "$temp_dir/modules"
     mkdir -p "$temp_dir/softwares"
 
-    local modules_dir="$SCRIPT_DIR/../modules"
-    local softwares_dir="$SCRIPT_DIR/../softwares"
+    local modules_dir="$SERVER_CAT_ROOT/modules"
+    local softwares_dir="$SERVER_CAT_ROOT/softwares"
 
     for script in "$modules_dir"/*.sh; do
         [[ -f "$script" ]] || continue

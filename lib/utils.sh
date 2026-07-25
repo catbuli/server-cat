@@ -31,6 +31,25 @@ get_script_var() {
     echo "${val:-$default_val}"
 }
 
+is_number() {
+    [[ "$1" =~ ^[0-9]+$ ]]
+}
+
+function_exists() {
+    declare -F "$1" > /dev/null
+}
+
+call_menu_func() {
+    local func="$1"
+
+    if [[ -z "$func" ]] || ! function_exists "$func"; then
+        print_error "功能不可用: ${func:-未声明}"
+        return 1
+    fi
+
+    "$func"
+}
+
 get_backup_func() {
     get_script_var "$1" "BACKUP_FUNC"
 }
@@ -95,8 +114,25 @@ get_real_user() {
 
 # 获取实际用户主目录
 get_real_home() {
-    local real_user=$(get_real_user)
-    getent passwd "$real_user" | cut -d: -f6
+    local real_user
+    local real_home
+
+    real_user=$(get_real_user)
+    real_home=$(getent passwd "$real_user" 2>/dev/null | cut -d: -f6)
+
+    if [[ -n "$real_home" ]]; then
+        printf '%s\n' "$real_home"
+    else
+        printf '%s\n' "$HOME"
+    fi
+}
+
+restart_ssh_service() {
+    if systemctl restart sshd 2>/dev/null; then
+        return 0
+    fi
+
+    systemctl restart ssh 2>/dev/null
 }
 
 # 显示菜单

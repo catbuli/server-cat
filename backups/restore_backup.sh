@@ -5,15 +5,17 @@ MENU_NAME=""
 MENU_FUNC="do_restore_backup"
 ROLLBACK_FUNC=""
 
-set -eo pipefail
-
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &> /dev/null && pwd)"
-source "$SCRIPT_DIR/../lib/utils.sh"
-source "$SCRIPT_DIR/../lib/backup_tools.sh"
+BACKUPS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &> /dev/null && pwd)"
+source "$BACKUPS_DIR/../lib/utils.sh"
+source "$BACKUPS_DIR/../lib/backup_tools.sh"
 
 function find_backup_file() {
     local backup_name="$1"
     local file="$BACKUP_ROOT/${backup_name}.tar.gz"
+
+    if [[ ! "$backup_name" =~ ^backup_[0-9]{8}_[0-9]{6}$ ]]; then
+        return 1
+    fi
 
     if [ -f "$file" ]; then
         echo "$file"
@@ -30,7 +32,10 @@ function restore_ssh_config() {
     if [ -f "$ssh_backup" ]; then
         [ -z "$quiet" ] && print_info "恢复 SSH 配置..."
         cp "$ssh_backup" /etc/ssh/sshd_config
-        systemctl restart sshd 2>/dev/null || systemctl restart ssh 2>/dev/null
+        if ! restart_ssh_service; then
+            [ -z "$quiet" ] && print_error "  ✗ SSH 配置已恢复，但服务重启失败"
+            return 1
+        fi
         [ -z "$quiet" ] && print_success "  ✓ SSH 配置已恢复"
     fi
 }
@@ -85,6 +90,7 @@ function restore_nginx() {
 function restore_docker() {
     local backup_dir="$1"
     local quiet="${2:-}"
+    local user_home="${HOME_DIR:-$(get_real_home)}"
 
     if ! check_command docker "Docker"; then
         return 1
@@ -100,11 +106,11 @@ function restore_docker() {
 
     if [ -d "$backup_dir/softwares/install_docker/compose" ]; then
         [ -z "$quiet" ] && print_info "恢复 Docker Compose 文件..."
-        mkdir -p "$HOME/dockers"
+        mkdir -p "$user_home/dockers"
         for compose_dir in "$backup_dir"/softwares/install_docker/compose/*/; do
             if [ -d "$compose_dir" ]; then
                 local dir_name=$(basename "$compose_dir")
-                cp -af "$compose_dir" "$HOME/dockers/"
+                cp -af "$compose_dir" "$user_home/dockers/"
                 [ -z "$quiet" ] && print_success "  ✓ 已恢复: $dir_name"
             fi
         done
@@ -114,6 +120,7 @@ function restore_docker() {
 function restore_certbot_renew() {
     local backup_dir="$1"
     local quiet="${2:-}"
+    local user_home="${HOME_DIR:-$(get_real_home)}"
 
     if ! check_command certbot "Certbot"; then
         return 1
@@ -123,9 +130,9 @@ function restore_certbot_renew() {
 
     if [ -f "$backup_dir/modules/certbot_renew/certbot-renew.sh" ]; then
         [ -z "$quiet" ] && print_info "恢复证书续期脚本..."
-        mkdir -p "$HOME/scripts"
-        cp "$backup_dir/modules/certbot_renew/certbot-renew.sh" "$HOME/scripts/"
-        chmod +x "$HOME/scripts/certbot-renew.sh"
+        mkdir -p "$user_home/scripts"
+        cp "$backup_dir/modules/certbot_renew/certbot-renew.sh" "$user_home/scripts/"
+        chmod +x "$user_home/scripts/certbot-renew.sh"
         [ -z "$quiet" ] && print_success "  ✓ 续期脚本已恢复"
         restored=true
     fi
@@ -145,14 +152,21 @@ function restore_certbot_renew() {
 
 function restore_all() {
     local backup_dir="$1"
+    local fail_count=0
+
     print_info "恢复全部备份..."
 
-    restore_ssh_config "$backup_dir" "quiet"
-    restore_certbot "$backup_dir" "quiet"
-    restore_nginx "$backup_dir" "quiet"
-    restore_docker "$backup_dir" "quiet"
-    restore_certbot_renew "$backup_dir" "quiet"
-    restore_user_dirs "$backup_dir" "quiet"
+    restore_ssh_config "$backup_dir" "quiet" || fail_count=$((fail_count + 1))
+    restore_certbot "$backup_dir" "quiet" || fail_count=$((fail_count + 1))
+    restore_nginx "$backup_dir" "quiet" || fail_count=$((fail_count + 1))
+    restore_docker "$backup_dir" "quiet" || fail_count=$((fail_count + 1))
+    restore_certbot_renew "$backup_dir" "quiet" || fail_count=$((fail_count + 1))
+    restore_user_dirs "$backup_dir" "quiet" || fail_count=$((fail_count + 1))
+
+    if [[ "$fail_count" -ne 0 ]]; then
+        print_error "全部恢复完成，但有 $fail_count 项失败"
+        return 1
+    fi
 
     print_success "全部恢复完成"
 }
@@ -160,14 +174,14 @@ function restore_all() {
 function restore_user_dirs() {
     local backup_dir="$1"
     local quiet="${2:-}"
-    local HOME_DIR="${HOME_DIR:-$HOME}"
+    local user_home="${HOME_DIR:-$(get_real_home)}"
 
     [ -z "$quiet" ] && print_info "恢复用户目录..."
 
     for dir in logs dockers configs scripts; do
         if [ -d "$backup_dir/$dir" ]; then
-            mkdir -p "$HOME_DIR"
-            cp -af "$backup_dir/$dir" "$HOME_DIR/"
+            mkdir -p "$user_home"
+            cp -af "$backup_dir/$dir" "$user_home/"
             [ -z "$quiet" ] && print_success "  ✓ $dir"
         fi
     done
@@ -222,10 +236,17 @@ function do_restore_backup() {
 
     local temp_dir="$BACKUP_ROOT/temp/restore_${backup_name}"
     rm -rf "$temp_dir"
-    mkdir -p "$temp_dir"
+    if ! mkdir -p "$temp_dir"; then
+        print_error "无法创建恢复临时目录"
+        return 1
+    fi
 
     print_info "解压备份..."
-    tar -xzf "$backup_file" -C "$temp_dir"
+    if ! tar -xzf "$backup_file" -C "$temp_dir"; then
+        print_error "备份解压失败"
+        rm -rf "$temp_dir"
+        return 1
+    fi
 
     # 找到实际的解压目录
     local extracted_dir=$(find "$temp_dir" -mindepth 1 -maxdepth 1 -type d | head -1)

@@ -4,12 +4,10 @@
 MENU_NAME="备份与恢复"
 MENU_FUNC="backup_menu"
 
-set -eo pipefail
-
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &> /dev/null && pwd)"
-source "$SCRIPT_DIR/../lib/utils.sh"
-source "$SCRIPT_DIR/../lib/backup_tools.sh"
-source "$SCRIPT_DIR/restore_backup.sh"
+BACKUPS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &> /dev/null && pwd)"
+source "$BACKUPS_DIR/../lib/utils.sh"
+source "$BACKUPS_DIR/../lib/backup_tools.sh"
+source "$BACKUPS_DIR/restore_backup.sh"
 
 function backup_menu() {
     init_backup_dirs
@@ -28,7 +26,11 @@ function backup_menu() {
 
         case $choice in
             1)
-                source "$SCRIPT_DIR/create_backup.sh" && do_create_backup
+                if source "$BACKUPS_DIR/create_backup.sh" && do_create_backup; then
+                    :
+                else
+                    print_error "创建备份失败"
+                fi
                 press_enter_to_continue
                 ;;
             2)
@@ -41,7 +43,11 @@ function backup_menu() {
                 list_backups
                 echo ""
                 read -p "请输入备份文件名: " backup_name
-                source "$SCRIPT_DIR/restore_backup.sh" && do_restore_backup "$backup_name"
+                if do_restore_backup "$backup_name"; then
+                    :
+                else
+                    print_error "恢复备份失败"
+                fi
                 press_enter_to_continue
                 ;;
             0) break ;;

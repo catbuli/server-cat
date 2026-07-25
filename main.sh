@@ -43,22 +43,34 @@ function load_menu_items() {
     # 临时存储: priority|func|name
     declare -a temp_items
 
-    mapfile -t scripts < <(find "$dir" -maxdepth 1 -type f -name "*.sh" 2>/dev/null)
+    mapfile -t scripts < <(find "$dir" -maxdepth 1 -type f -name "*.sh" -print 2>/dev/null | sort)
 
     for script in "${scripts[@]}"; do
-        source "$script"
+        if ! source "$script"; then
+            print_warning "跳过无法加载的脚本: $(basename "$script")"
+            continue
+        fi
 
         if [[ "$need_func" == "true" ]]; then
-            local func=$(get_menu_func "$script" "")
-            # 只添加有 MENU_FUNC 的脚本
-            if [[ -z "$func" ]]; then
+            local func
+            func=$(get_menu_func "$script" "")
+            if [[ -z "$func" ]] || ! function_exists "$func"; then
+                print_warning "跳过无效菜单项: $(basename "$script")"
                 continue
             fi
         fi
 
-        local base_name=$(basename "$script" .sh)
-        local name=$(get_menu_name "$script" "$base_name")
-        local priority=$(get_priority "$script")
+        local base_name
+        local name
+        local priority
+        base_name=$(basename "$script" .sh)
+        name=$(get_menu_name "$script" "$base_name")
+        priority=$(get_priority "$script")
+
+        if ! is_number "$priority"; then
+            print_warning "跳过优先级无效的脚本: $(basename "$script")"
+            continue
+        fi
 
         if [[ "$need_func" == "true" ]]; then
             temp_items+=("$priority|$func|$name")
@@ -66,6 +78,10 @@ function load_menu_items() {
             temp_items+=("$priority|$script|$name")
         fi
     done
+
+    if [[ ${#temp_items[@]} -eq 0 ]]; then
+        return 0
+    fi
 
     # 按优先级排序 (数字小的在前)
     IFS=$'\n' sorted_items=($(sort -t '|' -k1 -n <<<"${temp_items[*]}"))
@@ -75,11 +91,7 @@ function load_menu_items() {
     for item in "${sorted_items[@]}"; do
         IFS='|' read -r priority item_identifier name <<< "$item"
         menu_priorities+=("$priority")
-        if [[ "$need_func" == "true" ]]; then
-            menu_funcs+=("$item_identifier")
-        else
-            menu_funcs+=("$item_identifier")
-        fi
+        menu_funcs+=("$item_identifier")
         menu_names+=("$name")
     done
 }
@@ -92,17 +104,32 @@ function collect_funcs() {
     declare -a temp_items
 
     for dir in "$MODULES_DIR" "$SOFTWARE_DIR"; do
-        mapfile -t scripts < <(find "$dir" -maxdepth 1 -type f -name "*.sh" 2>/dev/null)
+        mapfile -t scripts < <(find "$dir" -maxdepth 1 -type f -name "*.sh" -print 2>/dev/null | sort)
         for script in "${scripts[@]}"; do
-            source "$script"
-            local func=$($func_extractor "$script")
-            if [[ -n "$func" ]]; then
-                local name=$(get_menu_name "$script" "$(basename "$script" .sh)")
-                local priority=$(get_priority "$script")
+            if ! source "$script"; then
+                print_warning "跳过无法加载的脚本: $(basename "$script")"
+                continue
+            fi
+
+            local func
+            local name
+            local priority
+            func=$($func_extractor "$script")
+            if [[ -z "$func" ]] || ! function_exists "$func"; then
+                continue
+            fi
+
+            name=$(get_menu_name "$script" "$(basename "$script" .sh)")
+            priority=$(get_priority "$script")
+            if is_number "$priority"; then
                 temp_items+=("$priority|$func|$name")
             fi
         done
     done
+
+    if [[ ${#temp_items[@]} -eq 0 ]]; then
+        return 0
+    fi
 
     IFS=$'\n' sorted_items=($(sort -t '|' -k1 -n <<<"${temp_items[*]}"))
     unset IFS
@@ -149,7 +176,10 @@ function show_generic_menu() {
         echo -e "${BLUE}-------------------------------------${NC}"
         read -p "请输入你的选择 [0-${#item_names[@]}]: " choice
 
-        if [[ "$choice" -eq 0 ]]; then
+        if ! is_number "$choice"; then
+            print_error "无效输入，请重试"
+            sleep 2
+        elif [[ "$choice" -eq 0 ]]; then
             break
         elif [[ "$choice" -eq 1 ]]; then
             print_step "开始$all_verb"
@@ -161,7 +191,7 @@ function show_generic_menu() {
                 local name="${item_names[$i]}"
                 print_step "正在$action_verb: $name"
 
-                if $func; then
+                if call_menu_func "$func"; then
                     print_success "✓ $name ${action_verb}成功"
                     ((success_count++))
                 else
@@ -182,8 +212,8 @@ function show_generic_menu() {
             print_step "正在$action_verb: $name"
 
             if [[ -n "$submenu_func" ]] && [[ "$func" == "$submenu_func" ]]; then
-                $func
-            elif $func; then
+                call_menu_func "$func"
+            elif call_menu_func "$func"; then
                 print_success "✓ $name ${action_verb}成功"
             else
                 print_error "✗ $name ${action_verb}失败"
@@ -246,13 +276,18 @@ function show_configs_menu() {
         echo -e "${BLUE}-------------------------------------${NC}"
         read -p "请输入你的选择 [0-${#item_names[@]}]: " choice
 
-        if [[ "$choice" -eq 0 ]]; then
+        if ! is_number "$choice"; then
+            print_error "无效输入，请重试"
+            sleep 2
+        elif [[ "$choice" -eq 0 ]]; then
             break
         elif [[ "$choice" -ge 1 && "$choice" -le ${#item_names[@]} ]]; then
             local idx=$((choice - 1))
             local func="${item_funcs[$idx]}"
             clear
-            $func
+            if ! call_menu_func "$func"; then
+                print_error "功能执行失败"
+            fi
             press_enter_to_continue
         else
             print_error "无效输入，请重试"
@@ -316,7 +351,7 @@ function show_rollback_menu() {
         IFS='|' read -r func name <<< "${rollback_items[$i]}"
         print_step "[$((i+1))/${#rollback_items[@]}] 恢复: $name"
 
-        if $func; then
+        if call_menu_func "$func"; then
             print_success "✓ $name 卸载成功"
             ((success_count++))
         else

@@ -93,11 +93,7 @@ function configure_ssh() {
     fi
 
     print_info "重启 SSH 服务使配置生效..."
-    if systemctl restart sshd 2>/dev/null; then
-        :
-    elif systemctl restart ssh 2>/dev/null; then
-        :
-    else
+    if ! restart_ssh_service; then
         print_warning "SSH 服务重启失败，请手动重启"
     fi
 
@@ -127,8 +123,12 @@ function rollback_ssh_config() {
 
     if confirm "是否恢复到此备份"; then
         cp "$latest_backup" "$sshd_config"
-        systemctl restart sshd || systemctl restart ssh
-        print_success "✅ SSH 配置已恢复"
+        if restart_ssh_service; then
+            print_success "✅ SSH 配置已恢复"
+        else
+            print_warning "SSH 配置已恢复，但服务重启失败，请手动重启"
+            return 1
+        fi
         print_info "备份文件保留: $latest_backup"
     else
         print_warning "已取消恢复"
