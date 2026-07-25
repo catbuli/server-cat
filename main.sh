@@ -32,8 +32,9 @@ function show_command_help() {
   sudo scat agent logs --follow   持续查看巡检日志
   sudo scat agent configure       打开 Agent 配置向导
   sudo scat agent test-email      发送 SMTP 测试邮件
-  sudo scat agent mute 30m        静默邮件通知 30 分钟
-  sudo scat agent unmute          立即恢复邮件通知
+  sudo scat agent test-telegram   发送 Telegram 测试通知
+  sudo scat agent mute 30m        静默外部通知 30 分钟
+  sudo scat agent unmute          立即恢复外部通知
 EOF
 }
 
@@ -370,7 +371,7 @@ function show_server_cat_uninstall() {
     }
 
     local remove_data=0
-    if confirm "是否同时删除 Agent 配置、SMTP 密码和告警状态" "n"; then
+    if confirm "是否同时删除 Agent 配置、通知凭据和告警状态" "n"; then
         print_warning "删除后无法通过重新安装恢复这些配置和状态"
         if confirm_strong "DELETE" "确认删除 /etc/server-cat 和 /var/lib/server-cat"; then
             remove_data=1

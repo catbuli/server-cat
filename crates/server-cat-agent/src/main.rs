@@ -6,9 +6,10 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashSet};
 use std::env;
 use std::fs;
+use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::process::{Command, ExitCode};
+use std::process::{Command, ExitCode, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const DEFAULT_CONFIG_PATH: &str = "/etc/server-cat/agent.toml";
@@ -19,6 +20,8 @@ struct Config {
     schedule: ScheduleConfig,
     thresholds: ThresholdConfig,
     email: EmailConfig,
+    #[serde(default)]
+    telegram: TelegramConfig,
     #[serde(default)]
     checks: CheckConfig,
 }
@@ -62,6 +65,32 @@ struct EmailConfig {
     smtp_username: String,
     #[serde(default)]
     smtp_password: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(default)]
+struct TelegramConfig {
+    enabled: bool,
+    bot_token: String,
+    chat_ids: Vec<String>,
+    reminder_hours: u64,
+}
+
+#[derive(Debug, Deserialize)]
+struct TelegramApiResponse {
+    ok: bool,
+    description: Option<String>,
+}
+
+impl Default for TelegramConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            bot_token: String::new(),
+            chat_ids: Vec::new(),
+            reminder_hours: 6,
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -151,6 +180,8 @@ struct ActiveAlert {
     last_detected_unix: Option<u64>,
     #[serde(default)]
     last_sent_unix: Option<u64>,
+    #[serde(default)]
+    last_telegram_sent_unix: Option<u64>,
 }
 
 #[derive(Default, Deserialize, Serialize)]
@@ -159,13 +190,13 @@ struct AgentState {
     alerts: BTreeMap<String, ActiveAlert>,
     #[serde(default)]
     last_scheduled_check_unix: Option<u64>,
-    #[serde(default)]
-    email_mute_until_unix: Option<u64>,
+    #[serde(default, alias = "email_mute_until_unix")]
+    notification_mute_until_unix: Option<u64>,
 }
 
 impl AgentState {
-    fn email_notifications_muted(&self, now: u64) -> bool {
-        self.email_mute_until_unix
+    fn notifications_muted(&self, now: u64) -> bool {
+        self.notification_mute_until_unix
             .is_some_and(|mute_until| mute_until > now)
     }
 }
@@ -227,6 +258,17 @@ fn run(arguments: Vec<String>) -> Result<(), String> {
             }
             Ok(())
         }
+        "validate-telegram" => {
+            let config_path = parse_config_path(&arguments[1..])?;
+            let config = load_config(&config_path)?;
+            validate_config(&config)?;
+            if config.telegram.enabled {
+                println!("Telegram 配置格式校验通过: {config_path}");
+            } else {
+                println!("Telegram 通知未启用，无需校验");
+            }
+            Ok(())
+        }
         "check" => {
             let (config_path, scheduled) = parse_check_arguments(&arguments[1..])?;
             let config = load_config(&config_path)?;
@@ -245,17 +287,23 @@ fn run(arguments: Vec<String>) -> Result<(), String> {
             validate_config(&config)?;
             send_test_email(&config)
         }
+        "test-telegram" => {
+            let config_path = parse_config_path(&arguments[1..])?;
+            let config = load_config(&config_path)?;
+            validate_config(&config)?;
+            send_test_telegram(&config)
+        }
         "mute" => {
             let (duration_seconds, config_path) = parse_mute_arguments(&arguments[1..])?;
             let config = load_config(&config_path)?;
             validate_config(&config)?;
-            mute_email_notifications(&config, duration_seconds)
+            mute_notifications(&config, duration_seconds)
         }
         "unmute" => {
             let config_path = parse_config_path(&arguments[1..])?;
             let config = load_config(&config_path)?;
             validate_config(&config)?;
-            unmute_email_notifications(&config)
+            unmute_notifications(&config)
         }
         "version" | "--version" | "-V" => {
             println!("server-cat-agent {}", env!("CARGO_PKG_VERSION"));
@@ -270,7 +318,7 @@ fn run(arguments: Vec<String>) -> Result<(), String> {
 }
 
 fn usage() -> &'static str {
-    "用法:\n  server-cat-agent validate-config [--config 路径]\n  server-cat-agent validate-smtp [--config 路径]\n  server-cat-agent check [--config 路径]\n  server-cat-agent check --scheduled [--config 路径]\n  server-cat-agent status [--config 路径]\n  server-cat-agent test-email [--config 路径]\n  server-cat-agent mute <时长> [--config 路径]\n  server-cat-agent unmute [--config 路径]\n  server-cat-agent version"
+    "用法:\n  server-cat-agent validate-config [--config 路径]\n  server-cat-agent validate-smtp [--config 路径]\n  server-cat-agent validate-telegram [--config 路径]\n  server-cat-agent check [--config 路径]\n  server-cat-agent check --scheduled [--config 路径]\n  server-cat-agent status [--config 路径]\n  server-cat-agent test-email [--config 路径]\n  server-cat-agent test-telegram [--config 路径]\n  server-cat-agent mute <时长> [--config 路径]\n  server-cat-agent unmute [--config 路径]\n  server-cat-agent version"
 }
 
 fn parse_config_path(arguments: &[String]) -> Result<String, String> {
@@ -408,6 +456,23 @@ fn validate_config(config: &Config) -> Result<(), String> {
         load_smtp_settings(config)?;
     }
 
+    if config.telegram.reminder_hours == 0 {
+        return Err("telegram.reminder_hours 必须大于 0".to_owned());
+    }
+
+    if config.telegram.enabled {
+        validate_telegram_bot_token(&config.telegram.bot_token)?;
+        if config.telegram.chat_ids.is_empty() {
+            return Err("启用 Telegram 时 telegram.chat_ids 必须至少包含一个 Chat ID".to_owned());
+        }
+        validate_unique_values(&config.telegram.chat_ids, "telegram.chat_ids")?;
+        for chat_id in &config.telegram.chat_ids {
+            if !is_valid_telegram_chat_id(chat_id) {
+                return Err(format!("telegram.chat_ids 包含无效 Chat ID: {chat_id}"));
+            }
+        }
+    }
+
     if config.checks.http_timeout_seconds == 0 || config.checks.http_timeout_seconds > 300 {
         return Err("checks.http_timeout_seconds 必须在 1 到 300 之间".to_owned());
     }
@@ -480,6 +545,35 @@ fn is_valid_docker_container_name(name: &str) -> bool {
             .all(|character| character.is_ascii_alphanumeric() || "_.-".contains(character))
 }
 
+fn validate_telegram_bot_token(token: &str) -> Result<(), String> {
+    let Some((bot_id, secret)) = token.split_once(':') else {
+        return Err("telegram.bot_token 格式无效".to_owned());
+    };
+    if bot_id.is_empty()
+        || !bot_id.chars().all(|character| character.is_ascii_digit())
+        || secret.len() < 20
+        || !secret
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || "_-".contains(character))
+    {
+        return Err("telegram.bot_token 格式无效".to_owned());
+    }
+
+    Ok(())
+}
+
+fn is_valid_telegram_chat_id(chat_id: &str) -> bool {
+    if let Some(username) = chat_id.strip_prefix('@') {
+        return (5..=32).contains(&username.len())
+            && username
+                .chars()
+                .all(|character| character.is_ascii_alphanumeric() || character == '_');
+    }
+
+    let numeric = chat_id.strip_prefix('-').unwrap_or(chat_id);
+    !numeric.is_empty() && numeric.chars().all(|character| character.is_ascii_digit())
+}
+
 fn validate_percent_pair(name: &str, warning: u8, critical: u8) -> Result<(), String> {
     if warning == 0 || critical == 0 || warning >= critical || critical > 100 {
         return Err(format!("{name} 阈值必须满足 0 < warning < critical <= 100"));
@@ -501,42 +595,98 @@ fn run_check(config: &Config, scheduled: bool) -> Result<(), String> {
     }
 
     let alerts = collect_alerts(config)?;
-    let notifications_muted = state.email_notifications_muted(now);
-    let notification_status = notification_status(config.email.enabled, &state, now);
-    let check_result = format_check_result(&alerts, &notification_status);
+    let notifications_muted = state.notifications_muted(now);
+    let email_status = notification_status(config.email.enabled, &state, now);
+    let telegram_status = notification_status(config.telegram.enabled, &state, now);
+    let check_result = format_check_result(&alerts, &email_status, &telegram_status);
     let smtp = if config.email.enabled && !notifications_muted {
         Some(load_smtp_settings(config)?)
     } else {
         None
     };
     let hostname = read_hostname();
-    let reminder_seconds = config.email.reminder_hours.saturating_mul(3600);
+    let email_reminder_seconds = config.email.reminder_hours.saturating_mul(3600);
+    let telegram_reminder_seconds = config.telegram.reminder_hours.saturating_mul(3600);
     let active_keys: HashSet<String> = alerts.iter().map(|alert| alert.key.clone()).collect();
+    let mut notification_errors = Vec::new();
 
     for alert in alerts {
         let previous = state.alerts.get(&alert.key).cloned();
-        let should_notify =
-            should_notify_active(previous.as_ref(), alert.level, now, reminder_seconds);
+        let should_email = config.email.enabled
+            && !notifications_muted
+            && should_notify_active(
+                previous.as_ref(),
+                alert.level,
+                previous.as_ref().and_then(|alert| alert.last_sent_unix),
+                now,
+                email_reminder_seconds,
+            );
+        let should_telegram = config.telegram.enabled
+            && !notifications_muted
+            && should_notify_active(
+                previous.as_ref(),
+                alert.level,
+                previous
+                    .as_ref()
+                    .and_then(|alert| alert.last_telegram_sent_unix),
+                now,
+                telegram_reminder_seconds,
+            );
 
-        if should_notify && let Some(settings) = smtp.as_ref() {
-            send_email(
+        let email_sent = if should_email && let Some(settings) = smtp.as_ref() {
+            match send_email(
                 settings,
                 config,
                 &format!("Server Cat {}告警: {}", alert.level.label(), alert.label),
                 &format!("主机: {hostname}\n时间: {now}\n\n{}\n", alert.message),
-            )?;
-        }
+            ) {
+                Ok(()) => true,
+                Err(error) => {
+                    notification_errors.push(format!("邮件告警 {}: {error}", alert.label));
+                    false
+                }
+            }
+        } else {
+            false
+        };
+        let telegram_sent = if should_telegram {
+            match send_telegram(
+                config,
+                &format!("Server Cat {}告警: {}", alert.level.label(), alert.label),
+                &format!("主机: {hostname}\n时间: {now}\n\n{}\n", alert.message),
+            ) {
+                Ok(()) => true,
+                Err(error) => {
+                    notification_errors.push(format!("Telegram 告警 {}: {error}", alert.label));
+                    false
+                }
+            }
+        } else {
+            false
+        };
 
-        let last_sent_unix = if should_notify && smtp.is_some() {
+        let last_sent_unix = if email_sent {
             Some(now)
         } else {
             previous
                 .as_ref()
                 .and_then(|previous| previous.last_sent_unix)
         };
+        let last_telegram_sent_unix = if telegram_sent {
+            Some(now)
+        } else {
+            previous
+                .as_ref()
+                .and_then(|previous| previous.last_telegram_sent_unix)
+        };
         let alert_key = alert.key.clone();
-        let active_alert =
-            active_alert_from_detection(alert, previous.as_ref(), now, last_sent_unix);
+        let active_alert = active_alert_from_detection(
+            alert,
+            previous.as_ref(),
+            now,
+            last_sent_unix,
+            last_telegram_sent_unix,
+        );
         state.alerts.insert(alert_key, active_alert);
     }
 
@@ -553,8 +703,9 @@ fn run_check(config: &Config, scheduled: bool) -> Result<(), String> {
             .get(&key)
             .cloned()
             .ok_or_else(|| "告警状态读取失败".to_owned())?;
-        if let Some(settings) = smtp.as_ref() {
-            send_email(
+        let mut recovery_sent = true;
+        if let Some(settings) = smtp.as_ref()
+            && let Err(error) = send_email(
                 settings,
                 config,
                 &format!("Server Cat 告警恢复: {}", previous.label),
@@ -562,9 +713,28 @@ fn run_check(config: &Config, scheduled: bool) -> Result<(), String> {
                     "主机: {hostname}\n时间: {now}\n\n{} 已恢复正常。\n上次告警: {}\n",
                     previous.label, previous.message
                 ),
-            )?;
+            )
+        {
+            notification_errors.push(format!("邮件恢复通知 {}: {error}", previous.label));
+            recovery_sent = false;
         }
-        state.alerts.remove(&key);
+        if config.telegram.enabled
+            && !notifications_muted
+            && let Err(error) = send_telegram(
+                config,
+                &format!("Server Cat 告警恢复: {}", previous.label),
+                &format!(
+                    "主机: {hostname}\n时间: {now}\n\n{} 已恢复正常。\n上次告警: {}\n",
+                    previous.label, previous.message
+                ),
+            )
+        {
+            notification_errors.push(format!("Telegram 恢复通知 {}: {error}", previous.label));
+            recovery_sent = false;
+        }
+        if recovery_sent {
+            state.alerts.remove(&key);
+        }
     }
 
     if scheduled {
@@ -572,7 +742,14 @@ fn run_check(config: &Config, scheduled: bool) -> Result<(), String> {
     }
     save_state(&state_path, &state)?;
     println!("{check_result}");
-    Ok(())
+    if notification_errors.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "通知发送失败:\n- {}",
+            notification_errors.join("\n- ")
+        ))
+    }
 }
 
 fn show_status(config: &Config) -> Result<(), String> {
@@ -580,7 +757,9 @@ fn show_status(config: &Config) -> Result<(), String> {
     let state = load_state(&state_path)?;
     let timer = read_timer_status();
     let last_scheduled_check = format_scheduled_check(state.last_scheduled_check_unix);
-    let notification_status = notification_status(config.email.enabled, &state, unix_timestamp()?);
+    let now = unix_timestamp()?;
+    let email_status = notification_status(config.email.enabled, &state, now);
+    let telegram_status = notification_status(config.telegram.enabled, &state, now);
 
     println!(
         "{}",
@@ -589,37 +768,38 @@ fn show_status(config: &Config) -> Result<(), String> {
             &state,
             &timer,
             &last_scheduled_check,
-            &notification_status,
+            &email_status,
+            &telegram_status,
         )
     );
     Ok(())
 }
 
-fn mute_email_notifications(config: &Config, duration_seconds: u64) -> Result<(), String> {
+fn mute_notifications(config: &Config, duration_seconds: u64) -> Result<(), String> {
     let now = unix_timestamp()?;
     let mute_until = now
         .checked_add(duration_seconds)
         .ok_or_else(|| "静默截止时间超出范围".to_owned())?;
     let state_path = Path::new(&config.agent.state_dir).join("alerts.json");
     let mut state = load_state(&state_path)?;
-    state.email_mute_until_unix = Some(mute_until);
+    state.notification_mute_until_unix = Some(mute_until);
     save_state(&state_path, &state)?;
 
-    println!("邮件通知已静默至: {}", format_unix_timestamp(mute_until));
+    println!("外部通知已静默至: {}", format_unix_timestamp(mute_until));
     Ok(())
 }
 
-fn unmute_email_notifications(config: &Config) -> Result<(), String> {
+fn unmute_notifications(config: &Config) -> Result<(), String> {
     let state_path = Path::new(&config.agent.state_dir).join("alerts.json");
     let mut state = load_state(&state_path)?;
-    if state.email_mute_until_unix.is_none() {
-        println!("邮件通知当前未处于静默状态");
+    if state.notification_mute_until_unix.is_none() {
+        println!("外部通知当前未处于静默状态");
         return Ok(());
     }
 
-    state.email_mute_until_unix = None;
+    state.notification_mute_until_unix = None;
     save_state(&state_path, &state)?;
-    println!("已恢复邮件通知");
+    println!("已恢复外部通知");
     Ok(())
 }
 
@@ -640,6 +820,29 @@ fn send_test_email(config: &Config) -> Result<(), String> {
         ),
     )?;
     println!("测试邮件已发送至: {}", config.email.recipients.join(", "));
+    Ok(())
+}
+
+fn send_test_telegram(config: &Config) -> Result<(), String> {
+    if !config.telegram.enabled {
+        return Err(
+            "Telegram 通知未启用，请先在 agent.toml 设置 telegram.enabled = true".to_owned(),
+        );
+    }
+
+    let hostname = read_hostname();
+    let now = unix_timestamp()?;
+    send_telegram(
+        config,
+        &format!("Server Cat Telegram 测试: {hostname}"),
+        &format!(
+            "主机: {hostname}\n时间: {now}\n\n这是一条 Server Cat 测试通知。收到此消息表示 Telegram Bot 配置可用于发送监控告警。\n"
+        ),
+    )?;
+    println!(
+        "Telegram 测试通知已发送至: {}",
+        config.telegram.chat_ids.join(", ")
+    );
     Ok(())
 }
 
@@ -703,7 +906,8 @@ fn format_agent_status(
     state: &AgentState,
     timer: &TimerStatus,
     last_scheduled_check: &str,
-    notification_status: &str,
+    email_status: &str,
+    telegram_status: &str,
 ) -> String {
     let mut lines = vec![
         "Server Cat Agent 状态".to_owned(),
@@ -712,7 +916,8 @@ fn format_agent_status(
         format!("下次定时触发: {}", timer.next_trigger),
         format!("实际巡检间隔: {} 秒", config.schedule.interval_seconds),
         format!("上次实际巡检: {last_scheduled_check}"),
-        format!("邮件通知: {notification_status}"),
+        format!("邮件通知: {email_status}"),
+        format!("Telegram 通知: {telegram_status}"),
         "巡检目标:".to_owned(),
         format!(
             "- systemd 服务: {}",
@@ -754,12 +959,13 @@ fn format_agent_status(
 
 fn format_active_alert(alert: &ActiveAlert) -> String {
     format!(
-        "- [{}] {}\n  首次发现: {}\n  最近发现: {}\n  最近通知: {}",
+        "- [{}] {}\n  首次发现: {}\n  最近发现: {}\n  最近邮件通知: {}\n  最近 Telegram 通知: {}",
         alert.level.label(),
         alert.message,
         format_optional_timestamp(alert.first_detected_unix),
         format_optional_timestamp(alert.last_detected_unix),
         format_optional_timestamp(alert.last_sent_unix),
+        format_optional_timestamp(alert.last_telegram_sent_unix),
     )
 }
 
@@ -776,7 +982,7 @@ fn notification_status(email_enabled: bool, state: &AgentState, now: u64) -> Str
         return "未启用".to_owned();
     }
     if let Some(mute_until) = state
-        .email_mute_until_unix
+        .notification_mute_until_unix
         .filter(|mute_until| *mute_until > now)
     {
         return format!("已静默至 {}", format_unix_timestamp(mute_until));
@@ -785,9 +991,15 @@ fn notification_status(email_enabled: bool, state: &AgentState, now: u64) -> Str
     "已启用".to_owned()
 }
 
-fn format_check_result(alerts: &[DetectedAlert], notification_status: &str) -> String {
+fn format_check_result(
+    alerts: &[DetectedAlert],
+    email_status: &str,
+    telegram_status: &str,
+) -> String {
     if alerts.is_empty() {
-        return format!("监控检查完成: 未发现超过阈值的指标，邮件通知{notification_status}");
+        return format!(
+            "监控检查完成: 未发现超过阈值的指标，邮件通知{email_status}，Telegram 通知{telegram_status}"
+        );
     }
     let details = alerts
         .iter()
@@ -796,7 +1008,7 @@ fn format_check_result(alerts: &[DetectedAlert], notification_status: &str) -> S
         .join("\n");
 
     format!(
-        "监控检查完成: {} 项指标处于告警状态，邮件通知{notification_status}\n\n告警详情:\n{details}",
+        "监控检查完成: {} 项指标处于告警状态，邮件通知{email_status}，Telegram 通知{telegram_status}\n\n告警详情:\n{details}",
         alerts.len()
     )
 }
@@ -1293,6 +1505,7 @@ fn save_state(path: &Path, state: &AgentState) -> Result<(), String> {
 fn should_notify_active(
     previous: Option<&ActiveAlert>,
     level: AlertLevel,
+    last_sent_unix: Option<u64>,
     now: u64,
     reminder_seconds: u64,
 ) -> bool {
@@ -1303,9 +1516,7 @@ fn should_notify_active(
         return true;
     }
 
-    previous
-        .last_sent_unix
-        .is_none_or(|last_sent| now.saturating_sub(last_sent) >= reminder_seconds)
+    last_sent_unix.is_none_or(|last_sent| now.saturating_sub(last_sent) >= reminder_seconds)
 }
 
 fn active_alert_from_detection(
@@ -1313,6 +1524,7 @@ fn active_alert_from_detection(
     previous: Option<&ActiveAlert>,
     now: u64,
     last_sent_unix: Option<u64>,
+    last_telegram_sent_unix: Option<u64>,
 ) -> ActiveAlert {
     ActiveAlert {
         level: detected.level,
@@ -1323,6 +1535,7 @@ fn active_alert_from_detection(
             .or(Some(now)),
         last_detected_unix: Some(now),
         last_sent_unix,
+        last_telegram_sent_unix,
     }
 }
 
@@ -1400,6 +1613,93 @@ fn send_email(
         .send(&message)
         .map_err(|error| format!("发送 SMTP 邮件失败: {error}"))?;
     Ok(())
+}
+
+fn send_telegram(config: &Config, subject: &str, body: &str) -> Result<(), String> {
+    let message = format_telegram_message(subject, body);
+    for chat_id in &config.telegram.chat_ids {
+        send_telegram_message(&config.telegram.bot_token, chat_id, &message)?;
+    }
+    Ok(())
+}
+
+fn format_telegram_message(subject: &str, body: &str) -> String {
+    let message = format!("{subject}\n\n{}", body.trim());
+    let mut characters = message.chars();
+    let truncated: String = characters.by_ref().take(4093).collect();
+    if characters.next().is_some() {
+        format!("{truncated}...")
+    } else {
+        truncated
+    }
+}
+
+fn send_telegram_message(bot_token: &str, chat_id: &str, message: &str) -> Result<(), String> {
+    let api_url = format!("https://api.telegram.org/bot{bot_token}/sendMessage");
+    let chat_argument = format!("chat_id={chat_id}");
+    let text_argument = format!("text={message}");
+    let mut child = Command::new("curl")
+        .args([
+            "--silent",
+            "--show-error",
+            "--proto",
+            "=https",
+            "--max-time",
+            "20",
+            "--request",
+            "POST",
+            "--data-urlencode",
+            &chat_argument,
+            "--data-urlencode",
+            &text_argument,
+            "--config",
+            "-",
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| format!("无法执行 Telegram 请求 curl: {error}"))?;
+
+    let write_result = child
+        .stdin
+        .take()
+        .ok_or_else(|| "无法打开 Telegram 请求输入".to_owned())?
+        .write_all(format!("url = \"{api_url}\"\n").as_bytes());
+    if let Err(error) = write_result {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err(format!("无法写入 Telegram 请求: {error}"));
+    }
+
+    let output = child
+        .wait_with_output()
+        .map_err(|error| format!("无法等待 Telegram 请求: {error}"))?;
+    if !output.status.success() {
+        let reason = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+        if reason.is_empty() {
+            return Err(format!("发送 Telegram 通知失败: {}", output.status));
+        } else {
+            return Err(format!("发送 Telegram 通知失败: {reason}"));
+        }
+    }
+
+    parse_telegram_api_response(&output.stdout)
+}
+
+fn parse_telegram_api_response(contents: &[u8]) -> Result<(), String> {
+    let response: TelegramApiResponse = serde_json::from_slice(contents)
+        .map_err(|error| format!("Telegram API 返回无效响应: {error}"))?;
+    if response.ok {
+        Ok(())
+    } else {
+        Err(format!(
+            "发送 Telegram 通知失败: {}",
+            response
+                .description
+                .unwrap_or_else(|| "Telegram API 未说明原因".to_owned())
+        ))
+    }
 }
 
 fn build_starttls_transport(settings: &SmtpSettings) -> Result<SmtpTransport, String> {
@@ -1489,6 +1789,34 @@ smtp_password = ""
         assert!(config.checks.certificate_paths.is_empty());
         assert_eq!(config.checks.certificate_warning_days, 14);
         assert_eq!(config.thresholds.swap_warning_percent, 80);
+        assert!(!config.telegram.enabled);
+        assert!(config.telegram.chat_ids.is_empty());
+        assert_eq!(config.telegram.reminder_hours, 6);
+    }
+
+    #[test]
+    fn accepts_valid_telegram_configuration() {
+        let configuration = format!(
+            "{VALID_CONFIG}\n[telegram]\nenabled = true\nbot_token = \"123456789:abcdefghijklmnopqrstuvwxyz_ABCDE\"\nchat_ids = [\"-1001234567890\", \"@server_cat_alerts\"]\nreminder_hours = 6\n"
+        );
+        let config: Config = toml::from_str(&configuration).expect("configuration parses");
+
+        assert!(validate_config(&config).is_ok());
+    }
+
+    #[test]
+    fn rejects_invalid_telegram_credentials() {
+        let invalid_token = format!(
+            "{VALID_CONFIG}\n[telegram]\nenabled = true\nbot_token = \"not-a-token\"\nchat_ids = [\"123456\"]\nreminder_hours = 6\n"
+        );
+        let invalid_chat = format!(
+            "{VALID_CONFIG}\n[telegram]\nenabled = true\nbot_token = \"123456789:abcdefghijklmnopqrstuvwxyz_ABCDE\"\nchat_ids = [\"group name\"]\nreminder_hours = 6\n"
+        );
+
+        for configuration in [invalid_token, invalid_chat] {
+            let config: Config = toml::from_str(&configuration).expect("configuration parses");
+            assert!(validate_config(&config).is_err());
+        }
     }
 
     #[test]
@@ -1631,8 +1959,8 @@ smtp_password = ""
         }];
 
         assert_eq!(
-            format_check_result(&alerts, "未启用"),
-            "监控检查完成: 1 项指标处于告警状态，邮件通知未启用\n\n告警详情:\n- [严重] 磁盘 / 的磁盘使用率为 91%，警告阈值 80%，严重阈值 90%"
+            format_check_result(&alerts, "未启用", "已启用"),
+            "监控检查完成: 1 项指标处于告警状态，邮件通知未启用，Telegram 通知已启用\n\n告警详情:\n- [严重] 磁盘 / 的磁盘使用率为 91%，警告阈值 80%，严重阈值 90%"
         );
     }
 
@@ -1652,6 +1980,7 @@ smtp_password = ""
                 first_detected_unix: None,
                 last_detected_unix: None,
                 last_sent_unix: None,
+                last_telegram_sent_unix: None,
             },
         );
         let timer = TimerStatus {
@@ -1668,8 +1997,9 @@ smtp_password = ""
                 &timer,
                 "Fri 2026-07-25 10:00:00 CST",
                 "已启用",
+                "未启用",
             ),
-            "Server Cat Agent 状态\n定时器: enabled (active)\n上次定时触发: Fri 2026-07-25 10:00:00 CST\n下次定时触发: Fri 2026-07-25 10:01:00 CST\n实际巡检间隔: 60 秒\n上次实际巡检: Fri 2026-07-25 10:00:00 CST\n邮件通知: 已启用\n巡检目标:\n- systemd 服务: nginx\n- HTTP 地址: https://example.com/health\n- Docker 容器: redis\n- TLS 证书: /etc/letsencrypt/live/example.com/fullchain.pem\n- 重启需求: 检查\n当前告警: 1 项\n- [严重] Docker 容器 redis 未处于运行状态\n  首次发现: 未记录\n  最近发现: 未记录\n  最近通知: 未记录"
+            "Server Cat Agent 状态\n定时器: enabled (active)\n上次定时触发: Fri 2026-07-25 10:00:00 CST\n下次定时触发: Fri 2026-07-25 10:01:00 CST\n实际巡检间隔: 60 秒\n上次实际巡检: Fri 2026-07-25 10:00:00 CST\n邮件通知: 已启用\nTelegram 通知: 未启用\n巡检目标:\n- systemd 服务: nginx\n- HTTP 地址: https://example.com/health\n- Docker 容器: redis\n- TLS 证书: /etc/letsencrypt/live/example.com/fullchain.pem\n- 重启需求: 检查\n当前告警: 1 项\n- [严重] Docker 容器 redis 未处于运行状态\n  首次发现: 未记录\n  最近发现: 未记录\n  最近邮件通知: 未记录\n  最近 Telegram 通知: 未记录"
         );
     }
 
@@ -1700,11 +2030,32 @@ smtp_password = ""
     #[test]
     fn mute_state_expires_without_writing_state() {
         let mut state = AgentState::default();
-        state.email_mute_until_unix = Some(200);
+        state.notification_mute_until_unix = Some(200);
 
-        assert!(state.email_notifications_muted(199));
-        assert!(!state.email_notifications_muted(200));
+        assert!(state.notifications_muted(199));
+        assert!(!state.notifications_muted(200));
         assert_eq!(notification_status(true, &state, 200), "已启用");
+    }
+
+    #[test]
+    fn loads_legacy_email_state_without_telegram_fields() {
+        let state: AgentState = serde_json::from_str(
+            r#"{
+                "alerts": {
+                    "memory": {
+                        "level": "warning",
+                        "label": "内存",
+                        "message": "内存使用率过高",
+                        "last_sent_unix": 100
+                    }
+                },
+                "email_mute_until_unix": 200
+            }"#,
+        )
+        .expect("legacy state parses");
+
+        assert_eq!(state.notification_mute_until_unix, Some(200));
+        assert_eq!(state.alerts["memory"].last_telegram_sent_unix, None);
     }
 
     #[test]
@@ -1716,6 +2067,7 @@ smtp_password = ""
             first_detected_unix: Some(100),
             last_detected_unix: Some(150),
             last_sent_unix: Some(150),
+            last_telegram_sent_unix: Some(140),
         };
         let detected = DetectedAlert {
             key: "memory".to_owned(),
@@ -1724,11 +2076,13 @@ smtp_password = ""
             message: "内存使用率为 95%".to_owned(),
         };
 
-        let updated = active_alert_from_detection(detected, Some(&previous), 200, Some(200));
+        let updated =
+            active_alert_from_detection(detected, Some(&previous), 200, Some(200), Some(200));
 
         assert_eq!(updated.first_detected_unix, Some(100));
         assert_eq!(updated.last_detected_unix, Some(200));
         assert_eq!(updated.last_sent_unix, Some(200));
+        assert_eq!(updated.last_telegram_sent_unix, Some(200));
         assert_eq!(updated.level, AlertLevel::Critical);
     }
 
@@ -1749,6 +2103,41 @@ smtp_password = ""
     }
 
     #[test]
+    fn test_telegram_requires_enabled_notifications() {
+        let config: Config = toml::from_str(VALID_CONFIG).expect("configuration parses");
+
+        assert_eq!(
+            send_test_telegram(&config),
+            Err("Telegram 通知未启用，请先在 agent.toml 设置 telegram.enabled = true".to_owned())
+        );
+    }
+
+    #[test]
+    fn telegram_message_is_plain_text_and_limited_to_api_length() {
+        assert_eq!(
+            format_telegram_message("Server Cat 告警", "磁盘空间不足\n"),
+            "Server Cat 告警\n\n磁盘空间不足"
+        );
+        assert_eq!(
+            format_telegram_message("告警", &"x".repeat(5000))
+                .chars()
+                .count(),
+            4096
+        );
+    }
+
+    #[test]
+    fn telegram_api_response_reports_remote_error() {
+        assert!(parse_telegram_api_response(br#"{"ok":true}"#).is_ok());
+        assert_eq!(
+            parse_telegram_api_response(
+                br#"{"ok":false,"description":"Bad Request: chat not found"}"#
+            ),
+            Err("发送 Telegram 通知失败: Bad Request: chat not found".to_owned())
+        );
+    }
+
+    #[test]
     fn only_notifies_for_new_escalated_or_due_alerts() {
         let previous = ActiveAlert {
             level: AlertLevel::Warning,
@@ -1757,23 +2146,33 @@ smtp_password = ""
             first_detected_unix: Some(100),
             last_detected_unix: Some(100),
             last_sent_unix: Some(100),
+            last_telegram_sent_unix: Some(90),
         };
-        assert!(should_notify_active(None, AlertLevel::Warning, 101, 3600));
+        assert!(should_notify_active(
+            None,
+            AlertLevel::Warning,
+            None,
+            101,
+            3600
+        ));
         assert!(!should_notify_active(
             Some(&previous),
             AlertLevel::Warning,
+            previous.last_sent_unix,
             200,
             3600
         ));
         assert!(should_notify_active(
             Some(&previous),
             AlertLevel::Critical,
+            previous.last_sent_unix,
             200,
             3600
         ));
         assert!(should_notify_active(
             Some(&previous),
             AlertLevel::Warning,
+            previous.last_telegram_sent_unix,
             3700,
             3600
         ));

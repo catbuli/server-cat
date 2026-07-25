@@ -50,6 +50,7 @@ server_cat_agent_dispatch() {
             }
             "$agent_binary" validate-config || return 1
             "$agent_binary" validate-smtp || return 1
+            "$agent_binary" validate-telegram || return 1
             systemctl enable --now server-cat-agent.timer
             print_success "已启用 Server Cat 每分钟监控"
             ;;
@@ -88,6 +89,13 @@ server_cat_agent_dispatch() {
                 return 1
             }
             "$agent_binary" test-email
+            ;;
+        test-telegram)
+            [[ $# -eq 1 ]] || {
+                print_error "用法: scat agent test-telegram"
+                return 1
+            }
+            "$agent_binary" test-telegram
             ;;
         mute)
             [[ $# -eq 2 ]] || {

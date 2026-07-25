@@ -182,6 +182,12 @@ check_agent_command_behavior() {
         fail "Agent 子命令通过独立分发层执行"
     fi
 
+    if bash -c 'source "$1/lib/utils.sh"; source "$1/lib/agent.sh"; SERVER_CAT_AGENT_BINARY=/usr/bin/true; server_cat_agent_dispatch test-telegram' _ "$PROJECT_ROOT"; then
+        pass "Agent Telegram 测试命令通过独立分发层执行"
+    else
+        fail "Agent Telegram 测试命令通过独立分发层执行"
+    fi
+
     if bash -c '
         source "$1/lib/utils.sh"
         source "$1/lib/agent.sh"
@@ -232,7 +238,9 @@ check_agent_config_behavior() {
         config_file="$2"
         server_cat_agent_config_set "$config_file" thresholds memory_warning_percent 91 &&
             [[ "$(server_cat_agent_config_read "$config_file" thresholds memory_warning_percent)" == "91" ]] &&
-            [[ "$(server_cat_agent_config_toml_array "nginx, docker")" == "[\"nginx\", \"docker\"]" ]]
+            [[ "$(server_cat_agent_config_toml_array "nginx, docker")" == "[\"nginx\", \"docker\"]" ]] &&
+            server_cat_agent_config_set "$config_file" telegram chat_ids "[\"-1001234567890\"]" &&
+            [[ "$(server_cat_agent_config_read "$config_file" telegram chat_ids)" == "[\"-1001234567890\"]" ]]
     ' _ "$PROJECT_ROOT" "$config_file"; then
         pass "Agent 配置向导可安全更新字段并生成 TOML 数组"
     else
@@ -640,7 +648,7 @@ check_uninstall_behavior() {
 }
 
 check_completion_behavior() {
-    if bash -c 'source "$1"; COMP_WORDS=(scat agent ""); COMP_CWORD=2; _scat_completion; [[ " ${COMPREPLY[*]} " == *" check "* && " ${COMPREPLY[*]} " == *" status "* && " ${COMPREPLY[*]} " == *" logs "* && " ${COMPREPLY[*]} " == *" configure "* && " ${COMPREPLY[*]} " == *" test-email "* && " ${COMPREPLY[*]} " == *" mute "* && " ${COMPREPLY[*]} " == *" unmute "* ]]' _ "$PROJECT_ROOT/packaging/completions/scat.bash"; then
+    if bash -c 'source "$1"; COMP_WORDS=(scat agent ""); COMP_CWORD=2; _scat_completion; [[ " ${COMPREPLY[*]} " == *" check "* && " ${COMPREPLY[*]} " == *" status "* && " ${COMPREPLY[*]} " == *" logs "* && " ${COMPREPLY[*]} " == *" configure "* && " ${COMPREPLY[*]} " == *" test-email "* && " ${COMPREPLY[*]} " == *" test-telegram "* && " ${COMPREPLY[*]} " == *" mute "* && " ${COMPREPLY[*]} " == *" unmute "* ]]' _ "$PROJECT_ROOT/packaging/completions/scat.bash"; then
         pass "scat 补全提供 Agent 子命令"
     else
         fail "scat 补全提供 Agent 子命令"
@@ -716,6 +724,8 @@ assert_contains_literal "main.sh" 'scat doctor' "命令行提供运行环境检�
 assert_contains_literal "main.sh" 'scat agent configure' "命令行提供 Agent 配置向导"
 assert_contains_literal "main.sh" 'scat agent logs --follow' "命令行提供 Agent 巡检日志查看"
 assert_contains_literal "lib/agent_config.sh" '"查看巡检日志"' "Agent 菜单提供巡检日志查看"
+assert_contains_literal "main.sh" 'scat agent test-telegram' "命令行提供 Telegram 测试通知"
+assert_contains_literal "lib/agent_config.sh" 'server_cat_agent_config_telegram' "Agent 菜单提供 Telegram 配置"
 assert_contains_literal "lib/cleanup.sh" 'systemd-tmpfiles --clean' "临时文件清理使用系统规则"
 assert_not_contains "lib/cleanup.sh" 'docker volume prune' "空间清理不删除 Docker 卷"
 assert_not_contains "lib/cleanup.sh" 'docker system prune' "空间清理不执行 Docker 全量清理"
@@ -754,6 +764,8 @@ assert_not_contains "packaging/install.sh" 'smtp.env' "首次安装不再创建�
 assert_not_contains "lib/release.sh" 'smtp.env' "更新不再创建独立 SMTP 配置"
 assert_not_contains "packaging/systemd/server-cat-agent.service" 'EnvironmentFile' "Agent 服务不依赖独立 SMTP 配置"
 assert_contains_literal "templates/agent.toml.example" 'smtp_host = ""' "Agent 模板包含 SMTP 配置"
+assert_contains_literal "templates/agent.toml.example" '[telegram]' "Agent 模板包含 Telegram 配置"
+assert_contains_literal "templates/agent.toml.example" 'bot_token = ""' "Agent 模板不预置 Telegram Bot Token"
 assert_contains_literal "lib/release.sh" 'gpgv --keyring' "更新检查使用独立公钥验证签名"
 assert_contains_literal "lib/release.sh" "--proto '=https'" "更新检查仅允许 HTTPS 发布源"
 assert_contains "modules/ssh_config.sh" 'restart_ssh_service' "SSH 配置复用服务重启回退"

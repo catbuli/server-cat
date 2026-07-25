@@ -467,6 +467,75 @@ server_cat_agent_config_email() {
     server_cat_agent_config_save "$staged_file"
 }
 
+server_cat_agent_config_telegram() {
+    local staged_file
+    local current
+    local rendered
+    local bot_token
+
+    server_cat_agent_config_prepare || return 1
+    staged_file="$SERVER_CAT_AGENT_CONFIG_STAGED"
+
+    print_step "配置 Telegram 通知"
+    current=$(server_cat_agent_config_read "$staged_file" telegram enabled)
+    server_cat_agent_config_prompt_boolean "启用 Telegram 通知" "${current:-false}"
+    server_cat_agent_config_set "$staged_file" telegram enabled "$SERVER_CAT_AGENT_CONFIG_VALUE" || return 1
+
+    if [[ "$SERVER_CAT_AGENT_CONFIG_VALUE" == "true" ]]; then
+        read -r -s -p "Bot Token（留空保持不变，输入 - 清空）: " bot_token
+        echo ""
+        if [[ -n "$bot_token" ]]; then
+            [[ "$bot_token" == "-" ]] && bot_token=""
+            rendered=$(server_cat_agent_config_toml_string "$bot_token")
+            server_cat_agent_config_set "$staged_file" telegram bot_token "$rendered" || return 1
+        fi
+
+        current=$(server_cat_agent_config_read "$staged_file" telegram chat_ids)
+        current=$(server_cat_agent_config_array_display "${current:-[]}")
+        server_cat_agent_config_prompt_optional "Chat ID（多个使用英文逗号分隔）" "$current"
+        rendered=$(server_cat_agent_config_toml_array "$SERVER_CAT_AGENT_CONFIG_VALUE")
+        server_cat_agent_config_set "$staged_file" telegram chat_ids "$rendered" || return 1
+
+        current=$(server_cat_agent_config_read "$staged_file" telegram reminder_hours)
+        server_cat_agent_config_prompt_integer "重复提醒间隔（小时）" "${current:-6}" 1 8760
+        server_cat_agent_config_set "$staged_file" telegram reminder_hours "$SERVER_CAT_AGENT_CONFIG_VALUE" || return 1
+    fi
+
+    server_cat_agent_config_save "$staged_file"
+}
+
+server_cat_agent_config_notifications_menu() {
+    local agent_binary
+    local choice
+
+    agent_binary=$(server_cat_agent_config_binary)
+    while true; do
+        choice=$(select_menu \
+            "🔔 配置通知" \
+            "$BLUE" \
+            "返回上一级" \
+            "" \
+            "配置邮件通知" \
+            "配置 Telegram 通知" \
+            "发送测试邮件" \
+            "发送 Telegram 测试通知")
+
+        case "$choice" in
+            1) server_cat_agent_config_email ;;
+            2) server_cat_agent_config_telegram ;;
+            3) "$agent_binary" test-email ;;
+            4) "$agent_binary" test-telegram ;;
+            0) break ;;
+            *) print_error "无效输入，请重试" ;;
+        esac
+
+        print_step "请按 [Enter] 键继续..."
+        read -r
+    done
+
+    return 0
+}
+
 server_cat_agent_config_validate() {
     local config_file
     local agent_binary
@@ -501,18 +570,17 @@ server_cat_agent_config_menu() {
             "查看巡检日志" \
             "配置巡检周期与资源阈值" \
             "配置额外巡检目标" \
-            "配置邮件通知" \
+            "配置通知" \
             "校验当前配置" \
             "启用定时巡检" \
-            "停止定时巡检" \
-            "发送测试邮件")
+            "停止定时巡检")
 
         case "$choice" in
             1) "$agent_binary" status ;;
             2) server_cat_agent_logs ;;
             3) server_cat_agent_config_resources ;;
             4) server_cat_agent_config_checks ;;
-            5) server_cat_agent_config_email ;;
+            5) server_cat_agent_config_notifications_menu ;;
             6) server_cat_agent_config_validate ;;
             7)
                 server_cat_agent_config_validate &&
@@ -523,7 +591,6 @@ server_cat_agent_config_menu() {
                 systemctl disable --now server-cat-agent.timer &&
                     print_success "已停止 Server Cat 定时巡检"
                 ;;
-            9) "$agent_binary" test-email ;;
             0) break ;;
             *) print_error "无效输入，请重试" ;;
         esac

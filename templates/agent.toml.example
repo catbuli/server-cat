@@ -25,6 +25,12 @@ smtp_security = "starttls"
 smtp_username = ""
 smtp_password = ""
 
+[telegram]
+enabled = false
+bot_token = ""
+chat_ids = []
+reminder_hours = 6
+
 # 可选：留空时不检查额外服务。
 [checks]
 systemd_services = []
