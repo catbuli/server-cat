@@ -17,12 +17,19 @@ case "$(uname -m)" in
     *) echo "不支持的 CPU 架构: $(uname -m)" >&2; exit 1 ;;
 esac
 
-for command_name in curl jq sha256sum tar zstd; do
-    command -v "$command_name" > /dev/null 2>&1 || {
-        echo "缺少依赖: $command_name" >&2
+missing_dependencies=()
+for command_name in curl gpgv jq sha256sum tar zstd; do
+    command -v "$command_name" > /dev/null 2>&1 || missing_dependencies+=("$command_name")
+done
+
+if [[ ${#missing_dependencies[@]} -gt 0 ]]; then
+    command -v apt-get > /dev/null 2>&1 || {
+        echo "缺少依赖且当前系统不支持 apt-get: ${missing_dependencies[*]}" >&2
         exit 1
     }
-done
+    apt-get update
+    apt-get install -y curl gnupg jq zstd
+fi
 
 temporary_dir="$(mktemp -d)"
 cleanup() {
