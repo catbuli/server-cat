@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Server Cat 运行环境诊断。依赖调用方已加载 lib/utils.sh 与 lib/release.sh。
+# Server Cat 运行环境诊断。依赖调用方已加载 lib/utils.sh、lib/release.sh 与 lib/certbot.sh。
 
 server_cat_doctor_agent_binary() {
     printf '%s\n' "${SERVER_CAT_AGENT_BINARY:-/opt/server-cat/current/server-cat-agent}"
@@ -58,6 +58,21 @@ server_cat_doctor_check_timer() {
     fi
 }
 
+server_cat_doctor_check_certbot_renewal() {
+    if ! server_cat_certbot_is_installed; then
+        print_info "○ 未安装 Certbot，跳过自动续期任务检查"
+        return 0
+    fi
+
+    if server_cat_certbot_refresh_renew_timer_status; then
+        server_cat_doctor_pass "Certbot 自动续期任务已启用并运行中"
+    elif [[ "$SERVER_CAT_CERTBOT_TIMER_PRESENT" -eq 0 ]]; then
+        server_cat_doctor_warn "已安装 Certbot，但未找到自动续期任务: $SERVER_CAT_CERTBOT_RENEW_TIMER"
+    else
+        server_cat_doctor_warn "Certbot 自动续期任务当前为 $SERVER_CAT_CERTBOT_TIMER_ENABLED ($SERVER_CAT_CERTBOT_TIMER_ACTIVE)"
+    fi
+}
+
 server_cat_doctor() {
     local install_root
     local installed_version
@@ -110,6 +125,8 @@ server_cat_doctor() {
     if command -v systemctl > /dev/null 2>&1; then
         server_cat_doctor_check_timer
     fi
+
+    server_cat_doctor_check_certbot_renewal
 
     if server_cat_update_check; then
         server_cat_doctor_pass "发布通道与签名验证通过"

@@ -7,19 +7,20 @@ PRIORITY=30
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &> /dev/null && pwd)"
 source "$SCRIPT_DIR/../lib/utils.sh"
+source "$SCRIPT_DIR/../lib/certbot.sh"
 
 function install_certbot() {
     echo "======================================"
     echo "  📦 Certbot 安装脚本"
     echo "======================================"
 
-    print_step "[1/6] 更新 apt 包列表..."
+    print_step "[1/7] 更新 apt 包列表..."
     if ! apt-get update -qq; then
         print_error "apt update 失败"
         return 1
     fi
 
-    print_step "[2/6] 确保 snapd 已安装..."
+    print_step "[2/7] 确保 snapd 已安装..."
     if ! command -v snap &> /dev/null; then
         print_info "正在安装 snapd..."
         if ! apt-get install -y snapd > /dev/null; then
@@ -30,17 +31,17 @@ function install_certbot() {
         print_info "snapd 已安装"
     fi
 
-    print_step "[3/6] 更新 snap 核心..."
+    print_step "[3/7] 更新 snap 核心..."
     if ! snap list core &>/dev/null; then
         snap install core 2>/dev/null || print_warning "core 安装跳过"
     else
         snap refresh core 2>&1 | grep -v "has no updates available" || true
     fi
 
-    print_step "[4/6] 移除可能存在的旧版本 certbot..."
+    print_step "[4/7] 移除可能存在的旧版本 certbot..."
     apt-get remove -y certbot 2>/dev/null || true
 
-    print_step "[5/6] 安装 Certbot (snap 版本)..."
+    print_step "[5/7] 安装 Certbot (snap 版本)..."
     if snap list certbot &> /dev/null; then
         print_info "Certbot 已通过 snap 安装"
     else
@@ -51,13 +52,16 @@ function install_certbot() {
         fi
     fi
 
-    print_step "[6/6] 创建 certbot 命令的符号链接..."
+    print_step "[6/7] 创建 certbot 命令的符号链接..."
     ln -sf /snap/bin/certbot /usr/bin/certbot
 
     if ! command -v certbot &> /dev/null; then
         print_error "Certbot 命令不可用"
         return 1
     fi
+
+    print_step "[7/7] 验证 Certbot 自动续期任务..."
+    server_cat_certbot_verify_auto_renewal
 
     echo ""
     print_success "✅ Certbot 安装成功！"

@@ -101,7 +101,7 @@ check_menu_metadata() {
 check_source_safety() {
     local script
 
-    for script in lib/uninstall.sh; do
+    for script in lib/certbot.sh lib/uninstall.sh; do
         if bash -c 'set +e; source "$1"; case "$-" in *e*) exit 1 ;; *) exit 0 ;; esac' _ "$PROJECT_ROOT/$script"; then
             pass "$script source 后不启用 errexit"
         else
@@ -339,6 +339,7 @@ check_doctor_behavior() {
         bash -c '
             source "$1/lib/utils.sh"
             source "$1/lib/release.sh"
+            source "$1/lib/certbot.sh"
             source "$1/lib/doctor.sh"
             curl() { :; }
             gpgv() { :; }
@@ -353,6 +354,7 @@ check_doctor_behavior() {
                     is-active) printf "%s\\n" inactive; return 3 ;;
                 esac
             }
+            server_cat_certbot_is_installed() { return 1; }
             server_cat_update_check() { SERVER_CAT_UPDATE_AVAILABLE=0; }
             server_cat_doctor
         ' _ "$PROJECT_ROOT" > /dev/null; then
@@ -362,6 +364,97 @@ check_doctor_behavior() {
     fi
 
     rm -rf "$doctor_root"
+}
+
+check_certbot_renewal_behavior() {
+    if bash -c '
+        source "$1/lib/utils.sh"
+        source "$1/lib/certbot.sh"
+        systemctl() {
+            case "$1" in
+                cat) return 0 ;;
+                is-enabled) printf "%s\n" enabled ;;
+                is-active) printf "%s\n" active ;;
+            esac
+        }
+        server_cat_certbot_refresh_renew_timer_status &&
+            [[ "$SERVER_CAT_CERTBOT_TIMER_PRESENT" -eq 1 ]] &&
+            [[ "$SERVER_CAT_CERTBOT_TIMER_ENABLED" == "enabled" ]] &&
+            [[ "$SERVER_CAT_CERTBOT_TIMER_ACTIVE" == "active" ]]
+    ' _ "$PROJECT_ROOT"; then
+        pass "Certbot 自动续期检查识别正常运行的 Snap timer"
+    else
+        fail "Certbot 自动续期检查识别正常运行的 Snap timer"
+    fi
+
+    if bash -c '
+        source "$1/softwares/install_certbot.sh"
+        server_cat_certbot_refresh_renew_timer_status() {
+            SERVER_CAT_CERTBOT_TIMER_PRESENT=0
+            SERVER_CAT_CERTBOT_TIMER_ENABLED="未知"
+            SERVER_CAT_CERTBOT_TIMER_ACTIVE="未知"
+            return 1
+        }
+        output=$(server_cat_certbot_verify_auto_renewal)
+        [[ "$output" == *"未找到 Certbot 自动续期任务"* ]] &&
+            [[ "$output" == *"不会创建额外的 cron"* ]]
+    ' _ "$PROJECT_ROOT"; then
+        pass "Certbot 安装验证在续期 timer 缺失时给出明确提醒"
+    else
+        fail "Certbot 安装验证在续期 timer 缺失时给出明确提醒"
+    fi
+
+    if bash -c '
+        source "$1/softwares/install_certbot.sh"
+        server_cat_certbot_refresh_renew_timer_status() {
+            SERVER_CAT_CERTBOT_TIMER_PRESENT=1
+            SERVER_CAT_CERTBOT_TIMER_ENABLED=disabled
+            SERVER_CAT_CERTBOT_TIMER_ACTIVE=inactive
+            return 1
+        }
+        output=$(server_cat_certbot_verify_auto_renewal)
+        [[ "$output" == *"disabled (inactive)"* ]]
+    ' _ "$PROJECT_ROOT"; then
+        pass "Certbot 安装验证在续期 timer 停用时报告状态"
+    else
+        fail "Certbot 安装验证在续期 timer 停用时报告状态"
+    fi
+
+    if bash -c '
+        source "$1/lib/utils.sh"
+        source "$1/lib/certbot.sh"
+        source "$1/lib/doctor.sh"
+        SERVER_CAT_DOCTOR_WARNING_COUNT=0
+        server_cat_certbot_is_installed() { return 1; }
+        output=$(server_cat_doctor_check_certbot_renewal)
+        [[ "$output" == *"未安装 Certbot，跳过"* ]] &&
+            [[ "$SERVER_CAT_DOCTOR_WARNING_COUNT" -eq 0 ]]
+    ' _ "$PROJECT_ROOT"; then
+        pass "doctor 在未安装 Certbot 时跳过续期检查"
+    else
+        fail "doctor 在未安装 Certbot 时跳过续期检查"
+    fi
+
+    if bash -c '
+        source "$1/lib/utils.sh"
+        source "$1/lib/certbot.sh"
+        source "$1/lib/doctor.sh"
+        SERVER_CAT_DOCTOR_WARNING_COUNT=0
+        server_cat_certbot_is_installed() { return 0; }
+        server_cat_certbot_refresh_renew_timer_status() {
+            SERVER_CAT_CERTBOT_TIMER_PRESENT=1
+            SERVER_CAT_CERTBOT_TIMER_ENABLED=enabled
+            SERVER_CAT_CERTBOT_TIMER_ACTIVE=active
+            return 0
+        }
+        output=$(server_cat_doctor_check_certbot_renewal)
+        [[ "$output" == *"自动续期任务已启用并运行中"* ]] &&
+            [[ "$SERVER_CAT_DOCTOR_WARNING_COUNT" -eq 0 ]]
+    ' _ "$PROJECT_ROOT"; then
+        pass "doctor 在已安装 Certbot 时报告自动续期状态"
+    else
+        fail "doctor 在已安装 Certbot 时报告自动续期状态"
+    fi
 }
 
 check_config_source_behavior() {
@@ -569,6 +662,7 @@ check_release_behavior
 check_legacy_layout_migration_behavior
 check_update_menu_behavior
 check_doctor_behavior
+check_certbot_renewal_behavior
 check_config_source_behavior
 check_cleanup_behavior
 check_uninstall_behavior
@@ -619,6 +713,8 @@ assert_not_contains "softwares/install_nginx.sh" 'BACKUP_FUNC' "Nginx 模块不�
 assert_not_contains "softwares/install_certbot.sh" 'BACKUP_FUNC' "Certbot 模块不再声明备份钩子"
 assert_not_contains "softwares/install_certbot.sh" 'setup_certbot_renew' "Certbot 安装不再配置自定义续期任务"
 assert_not_contains "softwares/install_certbot.sh" 'crontab' "Certbot 安装不再修改用户 crontab"
+assert_contains_literal "softwares/install_certbot.sh" 'server_cat_certbot_verify_auto_renewal' "Certbot 安装后验证 Snap 自动续期任务"
+assert_contains_literal "lib/doctor.sh" 'server_cat_doctor_check_certbot_renewal' "doctor 检查 Certbot 自动续期任务"
 assert_contains_literal "packaging/install.sh" 'bash-completion' "首次安装部署 Bash 补全"
 assert_contains_literal "lib/release.sh" 'bash-completion' "更新安装部署 Bash 补全"
 assert_contains_literal "packaging/install.sh" 'templates/agent.toml.example' "首次安装从模板创建 Agent 配置"
