@@ -75,6 +75,8 @@ sudo scat agent check
 sudo scat agent enable
 sudo scat agent disable
 sudo scat agent status
+sudo scat agent logs
+sudo scat agent logs --follow
 sudo scat agent mute 30m
 sudo scat agent unmute
 ```
@@ -118,6 +120,8 @@ certificate_warning_days = 14
 服务未处于 `active`、HTTP 非成功响应、超时或连接失败、Docker 容器未运行、证书文件不存在或证书无效均会产生严重告警。证书将在预警天数内到期、重启需求为警告级。
 
 `sudo scat agent status` 会汇总定时器状态、实际巡检间隔与上次执行时间、已配置巡检目标、邮件开关和当前活跃告警。每条活跃告警都会显示首次发现、最近发现和最近通知时间。
+
+定时巡检输出由 systemd journal 保存。`sudo scat agent logs` 显示最近 100 行，`sudo scat agent logs --follow` 持续查看新日志并可用 `Ctrl+C` 退出；Server Cat 不会额外创建日志文件。
 
 部署、重启服务或维护 Docker 时，可使用 `sudo scat agent mute 30m` 静默邮件通知。支持 `m`、`h`、`d` 三种单位，例如 `30m`、`2h`、`1d`，单次最长 30 天。巡检和 journal 记录不会停止；可用 `sudo scat agent unmute` 提前恢复邮件通知。
 

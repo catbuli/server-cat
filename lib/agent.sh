@@ -6,6 +6,29 @@ server_cat_agent_binary() {
     printf '%s\n' "${SERVER_CAT_AGENT_BINARY:-/opt/server-cat/current/server-cat-agent}"
 }
 
+server_cat_agent_logs() {
+    local option="${1:-}"
+
+    if ! command -v journalctl > /dev/null 2>&1; then
+        print_error "当前系统缺少 journalctl，无法读取 Agent 巡检日志"
+        return 1
+    fi
+
+    case "$option" in
+        "")
+            journalctl --unit server-cat-agent.service --lines 100 --no-pager
+            ;;
+        --follow)
+            print_info "正在持续查看 Agent 巡检日志，按 Ctrl+C 退出"
+            journalctl --unit server-cat-agent.service --follow
+            ;;
+        *)
+            print_error "用法: scat agent logs [--follow]"
+            return 1
+            ;;
+    esac
+}
+
 server_cat_agent_dispatch() {
     local subcommand="${1:-}"
     local agent_binary
@@ -44,6 +67,13 @@ server_cat_agent_dispatch() {
                 return 1
             }
             "$agent_binary" status
+            ;;
+        logs)
+            [[ $# -le 2 ]] || {
+                print_error "用法: scat agent logs [--follow]"
+                return 1
+            }
+            server_cat_agent_logs "${2:-}"
             ;;
         configure)
             [[ $# -eq 1 ]] || {

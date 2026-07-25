@@ -16,7 +16,11 @@ _scat_completion() {
             ;;
         agent)
             if [[ "$COMP_CWORD" -eq 2 ]]; then
-                COMPREPLY=( $(compgen -W 'check enable disable status configure test-email mute unmute' -- "$current_word") )
+                COMPREPLY=( $(compgen -W 'check enable disable status logs configure test-email mute unmute' -- "$current_word") )
+                return 0
+            fi
+            if [[ "$subcommand" == "logs" && "$COMP_CWORD" -eq 3 ]]; then
+                COMPREPLY=( $(compgen -W '--follow' -- "$current_word") )
             fi
             ;;
     esac

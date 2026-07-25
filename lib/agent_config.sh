@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Agent 配置向导。依赖调用方已加载 lib/utils.sh。
+# Agent 配置向导。依赖调用方已加载 lib/utils.sh 与 lib/agent.sh。
 
 server_cat_agent_config_path() {
     printf '%s\n' "${SERVER_CAT_AGENT_CONFIG:-/etc/server-cat/agent.toml}"
@@ -498,6 +498,7 @@ server_cat_agent_config_menu() {
             "返回上一级" \
             "" \
             "查看 Agent 状态" \
+            "查看巡检日志" \
             "配置巡检周期与资源阈值" \
             "配置额外巡检目标" \
             "配置邮件通知" \
@@ -508,20 +509,21 @@ server_cat_agent_config_menu() {
 
         case "$choice" in
             1) "$agent_binary" status ;;
-            2) server_cat_agent_config_resources ;;
-            3) server_cat_agent_config_checks ;;
-            4) server_cat_agent_config_email ;;
-            5) server_cat_agent_config_validate ;;
-            6)
+            2) server_cat_agent_logs ;;
+            3) server_cat_agent_config_resources ;;
+            4) server_cat_agent_config_checks ;;
+            5) server_cat_agent_config_email ;;
+            6) server_cat_agent_config_validate ;;
+            7)
                 server_cat_agent_config_validate &&
                     systemctl enable --now server-cat-agent.timer &&
                     print_success "已启用 Server Cat 定时巡检"
                 ;;
-            7)
+            8)
                 systemctl disable --now server-cat-agent.timer &&
                     print_success "已停止 Server Cat 定时巡检"
                 ;;
-            8) "$agent_binary" test-email ;;
+            9) "$agent_binary" test-email ;;
             0) break ;;
             *) print_error "无效输入，请重试" ;;
         esac

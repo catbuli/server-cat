@@ -192,6 +192,29 @@ check_agent_command_behavior() {
     else
         fail "Agent 配置命令通过独立分发层执行"
     fi
+
+    if bash -c '
+        source "$1/lib/utils.sh"
+        source "$1/lib/agent.sh"
+        journalctl() { printf "%s\n" "$*"; }
+        [[ "$(server_cat_agent_dispatch logs)" == "--unit server-cat-agent.service --lines 100 --no-pager" ]] &&
+            [[ "$(server_cat_agent_dispatch logs --follow)" == *"--unit server-cat-agent.service --follow"* ]]
+    ' _ "$PROJECT_ROOT"; then
+        pass "Agent 日志命令支持最近日志与持续跟踪"
+    else
+        fail "Agent 日志命令支持最近日志与持续跟踪"
+    fi
+
+    if bash -c '
+        source "$1/lib/utils.sh"
+        source "$1/lib/agent.sh"
+        journalctl() { return 0; }
+        ! server_cat_agent_dispatch logs --unknown > /dev/null
+    ' _ "$PROJECT_ROOT"; then
+        pass "Agent 日志命令拒绝未知参数"
+    else
+        fail "Agent 日志命令拒绝未知参数"
+    fi
 }
 
 check_agent_config_behavior() {
@@ -617,10 +640,16 @@ check_uninstall_behavior() {
 }
 
 check_completion_behavior() {
-    if bash -c 'source "$1"; COMP_WORDS=(scat agent ""); COMP_CWORD=2; _scat_completion; [[ " ${COMPREPLY[*]} " == *" check "* && " ${COMPREPLY[*]} " == *" status "* && " ${COMPREPLY[*]} " == *" configure "* && " ${COMPREPLY[*]} " == *" test-email "* && " ${COMPREPLY[*]} " == *" mute "* && " ${COMPREPLY[*]} " == *" unmute "* ]]' _ "$PROJECT_ROOT/packaging/completions/scat.bash"; then
+    if bash -c 'source "$1"; COMP_WORDS=(scat agent ""); COMP_CWORD=2; _scat_completion; [[ " ${COMPREPLY[*]} " == *" check "* && " ${COMPREPLY[*]} " == *" status "* && " ${COMPREPLY[*]} " == *" logs "* && " ${COMPREPLY[*]} " == *" configure "* && " ${COMPREPLY[*]} " == *" test-email "* && " ${COMPREPLY[*]} " == *" mute "* && " ${COMPREPLY[*]} " == *" unmute "* ]]' _ "$PROJECT_ROOT/packaging/completions/scat.bash"; then
         pass "scat 补全提供 Agent 子命令"
     else
         fail "scat 补全提供 Agent 子命令"
+    fi
+
+    if bash -c 'source "$1"; COMP_WORDS=(scat agent logs ""); COMP_CWORD=3; _scat_completion; [[ " ${COMPREPLY[*]} " == *" --follow "* ]]' _ "$PROJECT_ROOT/packaging/completions/scat.bash"; then
+        pass "scat 补全提供日志持续跟踪参数"
+    else
+        fail "scat 补全提供日志持续跟踪参数"
     fi
 
     if bash -c 'source "$1"; COMP_WORDS=(scat update ""); COMP_CWORD=2; _scat_completion; [[ " ${COMPREPLY[*]} " == *" rollback "* ]]' _ "$PROJECT_ROOT/packaging/completions/scat.bash"; then
@@ -685,6 +714,8 @@ assert_contains_literal "lib/uninstall.sh" 'server_cat_uninstall_remove_director
 assert_contains_literal "lib/uninstall.sh" '已保留配置目录' "自卸载默认保留配置和状态"
 assert_contains_literal "main.sh" 'scat doctor' "命令行提供运行环境检查"
 assert_contains_literal "main.sh" 'scat agent configure' "命令行提供 Agent 配置向导"
+assert_contains_literal "main.sh" 'scat agent logs --follow' "命令行提供 Agent 巡检日志查看"
+assert_contains_literal "lib/agent_config.sh" '"查看巡检日志"' "Agent 菜单提供巡检日志查看"
 assert_contains_literal "lib/cleanup.sh" 'systemd-tmpfiles --clean' "临时文件清理使用系统规则"
 assert_not_contains "lib/cleanup.sh" 'docker volume prune' "空间清理不删除 Docker 卷"
 assert_not_contains "lib/cleanup.sh" 'docker system prune' "空间清理不执行 Docker 全量清理"
