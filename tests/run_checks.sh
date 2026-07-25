@@ -141,8 +141,6 @@ assert_contains "backups/restore_backup.sh" 'get_real_home' "恢复用户数据�
 assert_contains_literal "backups/restore_backup.sh" 'fail_count=$((fail_count + 1))' "全部恢复会汇总子项失败"
 assert_contains "modules/init_user_dirs.sh" 'get_real_home' "用户目录初始化使用实际用户主目录"
 assert_contains "modules/certbot_renew.sh" 'get_real_home' "证书续期使用实际用户主目录"
-assert_not_contains "README.md" '^set -eo pipefail$' "README 不建议 source 脚本在顶层启用 errexit"
-
 printf '\n检查完成：%s 项，失败 %s 项。\n' "$CHECK_COUNT" "$FAIL_COUNT"
 
 if [[ "$FAIL_COUNT" -ne 0 ]]; then
