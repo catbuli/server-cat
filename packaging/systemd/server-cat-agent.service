@@ -7,5 +7,4 @@ Wants=network-online.target
 Type=oneshot
 User=root
 ExecStart=/opt/server-cat/current/server-cat-agent check --scheduled
-EnvironmentFile=-/etc/server-cat/smtp.env
 TimeoutStartSec=2min

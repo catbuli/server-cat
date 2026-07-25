@@ -19,6 +19,11 @@ enabled = false
 from = ""
 recipients = []
 reminder_hours = 6
+smtp_host = ""
+smtp_port = 587
+smtp_security = "starttls"
+smtp_username = ""
+smtp_password = ""
 
 # 可选：留空时不检查额外服务。
 [checks]

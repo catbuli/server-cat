@@ -21,7 +21,7 @@ server-cat/
 ├── softwares/                 # 常用软件安装功能
 ├── backups/                   # 本地备份与恢复功能
 ├── configs/                   # 菜单配置功能
-├── templates/                 # Agent 与 SMTP 配置模板
+├── templates/                 # Agent 运行配置模板
 ├── lib/                       # 公共功能与签名更新逻辑
 ├── crates/server-cat-agent/   # 常驻监控 Agent
 ├── packaging/                 # 安装器与 systemd 单元
@@ -69,7 +69,20 @@ sudo scat agent unmute
 
 ## 监控与邮件
 
-Agent 默认不启用邮件和定时运行。监控阈值位于 `/etc/server-cat/agent.toml`，SMTP 连接信息位于 `/etc/server-cat/smtp.env`。完成本机配置后，执行 `sudo scat agent enable` 启用定时监控。
+Agent 默认不启用邮件和定时运行。所有监控、邮件和 SMTP 配置均位于权限为 `0600` 的 `/etc/server-cat/agent.toml`。完成本机配置后，执行 `sudo scat agent enable` 启用定时监控。
+
+```toml
+[email]
+enabled = true
+from = "server-cat@example.com"
+recipients = ["ops@example.com"]
+reminder_hours = 6
+smtp_host = "smtp.example.com"
+smtp_port = 587
+smtp_security = "starttls"
+smtp_username = "username"
+smtp_password = "password"
+```
 
 启用邮件后，可先发送测试邮件确认 SMTP 与收件人可用；此命令不会创建或更新告警状态：
 

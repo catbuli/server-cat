@@ -12,7 +12,6 @@ use std::process::{Command, ExitCode};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const DEFAULT_CONFIG_PATH: &str = "/etc/server-cat/agent.toml";
-const DEFAULT_SMTP_ENV_PATH: &str = "/etc/server-cat/smtp.env";
 
 #[derive(Debug, Deserialize)]
 struct Config {
@@ -53,6 +52,16 @@ struct EmailConfig {
     from: String,
     recipients: Vec<String>,
     reminder_hours: u64,
+    #[serde(default)]
+    smtp_host: String,
+    #[serde(default = "default_smtp_port")]
+    smtp_port: u16,
+    #[serde(default = "default_smtp_security")]
+    smtp_security: String,
+    #[serde(default)]
+    smtp_username: String,
+    #[serde(default)]
+    smtp_password: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -97,6 +106,14 @@ fn default_swap_warning_percent() -> u8 {
 
 fn default_certificate_warning_days() -> u64 {
     14
+}
+
+fn default_smtp_port() -> u16 {
+    587
+}
+
+fn default_smtp_security() -> String {
+    "starttls".to_owned()
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -203,8 +220,8 @@ fn run(arguments: Vec<String>) -> Result<(), String> {
             let config = load_config(&config_path)?;
             validate_config(&config)?;
             if config.email.enabled {
-                load_smtp_settings()?;
-                println!("SMTP 配置格式校验通过: {}", smtp_env_path().display());
+                load_smtp_settings(&config)?;
+                println!("SMTP 配置格式校验通过: {config_path}");
             } else {
                 println!("邮件通知未启用，无需校验 SMTP 配置");
             }
@@ -387,6 +404,8 @@ fn validate_config(config: &Config) -> Result<(), String> {
         {
             return Err("启用邮件时 email.recipients 必须至少包含一个地址".to_owned());
         }
+
+        load_smtp_settings(config)?;
     }
 
     if config.checks.http_timeout_seconds == 0 || config.checks.http_timeout_seconds > 300 {
@@ -486,7 +505,7 @@ fn run_check(config: &Config, scheduled: bool) -> Result<(), String> {
     let notification_status = notification_status(config.email.enabled, &state, now);
     let check_result = format_check_result(&alerts, &notification_status);
     let smtp = if config.email.enabled && !notifications_muted {
-        Some(load_smtp_settings()?)
+        Some(load_smtp_settings(config)?)
     } else {
         None
     };
@@ -609,7 +628,7 @@ fn send_test_email(config: &Config) -> Result<(), String> {
         return Err("邮件通知未启用，请先在 agent.toml 设置 email.enabled = true".to_owned());
     }
 
-    let settings = load_smtp_settings()?;
+    let settings = load_smtp_settings(config)?;
     let hostname = read_hostname();
     let now = unix_timestamp()?;
     send_email(
@@ -1307,104 +1326,47 @@ fn active_alert_from_detection(
     }
 }
 
-fn load_smtp_settings() -> Result<SmtpSettings, String> {
-    let values = load_smtp_environment()?;
-    let host = required_smtp_value(&values, "SERVER_CAT_SMTP_HOST")?;
-    let port = smtp_value(&values, "SERVER_CAT_SMTP_PORT")
-        .unwrap_or_else(|| "587".to_owned())
-        .parse::<u16>()
-        .map_err(|error| format!("SERVER_CAT_SMTP_PORT 必须是 1 到 65535 的端口: {error}"))?;
-    if port == 0 {
-        return Err("SERVER_CAT_SMTP_PORT 必须是 1 到 65535 的端口".to_owned());
+fn load_smtp_settings(config: &Config) -> Result<SmtpSettings, String> {
+    let email = &config.email;
+    let host = required_email_smtp_value(&email.smtp_host, "email.smtp_host")?;
+    if email.smtp_port == 0 {
+        return Err("email.smtp_port 必须是 1 到 65535 的端口".to_owned());
     }
 
-    let security = match smtp_value(&values, "SERVER_CAT_SMTP_SECURITY")
-        .unwrap_or_else(|| "starttls".to_owned())
-        .as_str()
-    {
+    let security = match email.smtp_security.as_str() {
         "starttls" => SmtpSecurity::StartTls,
         "tls" => SmtpSecurity::Tls,
         "none" => SmtpSecurity::None,
         value => {
             return Err(format!(
-                "SERVER_CAT_SMTP_SECURITY 必须为 starttls、tls 或 none，当前为 {value}"
+                "email.smtp_security 必须为 starttls、tls 或 none，当前为 {value}"
             ));
         }
     };
-    let username = smtp_value(&values, "SERVER_CAT_SMTP_USERNAME");
-    let password = smtp_value(&values, "SERVER_CAT_SMTP_PASSWORD");
+    let username = optional_email_smtp_value(&email.smtp_username);
+    let password = optional_email_smtp_value(&email.smtp_password);
     let credentials = match (username, password) {
         (None, None) => None,
         (Some(username), Some(password)) => Some(Credentials::new(username, password)),
         _ => {
-            return Err(
-                "SERVER_CAT_SMTP_USERNAME 与 SERVER_CAT_SMTP_PASSWORD 必须同时设置".to_owned(),
-            );
+            return Err("email.smtp_username 与 email.smtp_password 必须同时设置".to_owned());
         }
     };
 
     Ok(SmtpSettings {
         host,
-        port,
+        port: email.smtp_port,
         security,
         credentials,
     })
 }
 
-fn smtp_env_path() -> PathBuf {
-    env::var("SERVER_CAT_SMTP_ENV_PATH")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from(DEFAULT_SMTP_ENV_PATH))
+fn required_email_smtp_value(value: &str, name: &str) -> Result<String, String> {
+    optional_email_smtp_value(value).ok_or_else(|| format!("启用邮件时 {name} 不能为空"))
 }
 
-fn load_smtp_environment() -> Result<BTreeMap<String, String>, String> {
-    let path = smtp_env_path();
-    let contents = fs::read_to_string(&path)
-        .map_err(|error| format!("无法读取 SMTP 配置 {}: {error}", path.display()))?;
-    let mut values = BTreeMap::new();
-
-    for (line_number, line) in contents.lines().enumerate() {
-        let line = line.trim();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        let Some((key, value)) = line.split_once('=') else {
-            return Err(format!(
-                "SMTP 配置第 {} 行必须为 KEY=VALUE",
-                line_number + 1
-            ));
-        };
-        let key = key.trim();
-        if key.is_empty() || !key.starts_with("SERVER_CAT_SMTP_") {
-            return Err(format!("SMTP 配置第 {} 行的变量名无效", line_number + 1));
-        }
-        values.insert(key.to_owned(), unquote_environment_value(value.trim()));
-    }
-
-    Ok(values)
-}
-
-fn unquote_environment_value(value: &str) -> String {
-    if value.len() >= 2
-        && ((value.starts_with('"') && value.ends_with('"'))
-            || (value.starts_with('\'') && value.ends_with('\'')))
-    {
-        value[1..value.len() - 1].to_owned()
-    } else {
-        value.to_owned()
-    }
-}
-
-fn smtp_value(values: &BTreeMap<String, String>, name: &str) -> Option<String> {
-    env::var(name)
-        .ok()
-        .or_else(|| values.get(name).cloned())
-        .filter(|value| !value.trim().is_empty())
-}
-
-fn required_smtp_value(values: &BTreeMap<String, String>, name: &str) -> Result<String, String> {
-    smtp_value(values, name)
-        .ok_or_else(|| format!("启用邮件时必须在 {} 设置 {name}", smtp_env_path().display()))
+fn optional_email_smtp_value(value: &str) -> Option<String> {
+    (!value.trim().is_empty()).then(|| value.to_owned())
 }
 
 fn send_email(
@@ -1508,6 +1470,11 @@ enabled = true
 from = "server-cat@example.com"
 recipients = ["ops@example.com"]
 reminder_hours = 6
+smtp_host = "smtp.example.com"
+smtp_port = 587
+smtp_security = "starttls"
+smtp_username = ""
+smtp_password = ""
 "#;
 
     #[test]
@@ -1831,8 +1798,10 @@ reminder_hours = 6
     }
 
     #[test]
-    fn parses_quoted_smtp_password_without_shell_evaluation() {
-        assert_eq!(unquote_environment_value("'pa$$=word'"), "pa$$=word");
-        assert_eq!(unquote_environment_value("plain=value"), "plain=value");
+    fn rejects_enabled_email_without_smtp_host() {
+        let invalid = VALID_CONFIG.replace("smtp_host = \"smtp.example.com\"", "smtp_host = \"\"");
+        let config: Config = toml::from_str(&invalid).expect("configuration parses");
+
+        assert!(validate_config(&config).is_err());
     }
 }
