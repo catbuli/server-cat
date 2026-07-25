@@ -18,9 +18,12 @@ function show_command_help() {
 用法:
   sudo server-cat                       打开交互式菜单
   sudo server-cat update check          检查并验证 stable 发布版本
-  sudo server-cat update apply          安装已验证的更新（即将提供）
-  sudo server-cat update rollback 版本   回退已安装版本（即将提供）
-  sudo server-cat agent status          查看监控 Agent 状态（即将提供）
+  sudo server-cat update apply          安装已验证的更新
+  sudo server-cat update rollback 版本   回退已安装版本
+  sudo server-cat agent check           立即执行一次监控检查
+  sudo server-cat agent enable          启用每分钟监控
+  sudo server-cat agent disable         停止并禁用每分钟监控
+  sudo server-cat agent status          查看监控定时器状态
 EOF
 }
 
@@ -68,8 +71,44 @@ function dispatch_command() {
             esac
             ;;
         agent)
-            print_warning "Rust Agent 尚未发布，当前不能执行 agent 命令"
-            return 1
+            case "$subcommand" in
+                check)
+                    [[ $# -eq 2 ]] || {
+                        print_error "用法: server-cat agent check"
+                        return 1
+                    }
+                    /opt/server-cat/current/server-cat-agent check
+                    ;;
+                enable)
+                    [[ $# -eq 2 ]] || {
+                        print_error "用法: server-cat agent enable"
+                        return 1
+                    }
+                    /opt/server-cat/current/server-cat-agent validate-config || return 1
+                    /opt/server-cat/current/server-cat-agent validate-smtp || return 1
+                    systemctl enable --now server-cat-agent.timer
+                    print_success "已启用 Server Cat 每分钟监控"
+                    ;;
+                disable)
+                    [[ $# -eq 2 ]] || {
+                        print_error "用法: server-cat agent disable"
+                        return 1
+                    }
+                    systemctl disable --now server-cat-agent.timer
+                    print_success "已停止并禁用 Server Cat 每分钟监控"
+                    ;;
+                status)
+                    [[ $# -eq 2 ]] || {
+                        print_error "用法: server-cat agent status"
+                        return 1
+                    }
+                    systemctl status server-cat-agent.timer --no-pager
+                    ;;
+                *)
+                    print_error "未知 Agent 命令: ${subcommand:-未提供}"
+                    return 1
+                    ;;
+            esac
             ;;
         help|--help|-h)
             show_command_help
