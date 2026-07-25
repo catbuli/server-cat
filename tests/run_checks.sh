@@ -121,6 +121,33 @@ check_release_behavior() {
     fi
 }
 
+check_legacy_layout_migration_behavior() {
+    local migration_root
+
+    migration_root=$(mktemp -d)
+    mkdir -p "$migration_root/releases/0.1.0"
+    printf '%s\n' "0.1.0" > "$migration_root/releases/0.1.0/VERSION"
+    ln -s "releases/0.1.0" "$migration_root/current"
+
+    if SERVER_CAT_INSTALL_ROOT="$migration_root" \
+        bash -c '
+            source "$1/lib/utils.sh"
+            source "$1/lib/release.sh"
+            server_cat_release_migrate_legacy_layout > /dev/null &&
+                [[ "$SERVER_CAT_LEGACY_LAYOUT_MIGRATED" -eq 1 ]] &&
+                [[ -d "$SERVER_CAT_INSTALL_ROOT/current" ]] &&
+                [[ ! -L "$SERVER_CAT_INSTALL_ROOT/current" ]] &&
+                [[ ! -e "$SERVER_CAT_INSTALL_ROOT/releases" ]] &&
+                [[ "$(server_cat_installed_version)" == "0.1.0" ]]
+        ' _ "$PROJECT_ROOT"; then
+        pass "旧版发布目录可自动迁移为单一安装目录"
+    else
+        fail "旧版发布目录可自动迁移为单一安装目录"
+    fi
+
+    rm -rf "$migration_root"
+}
+
 check_update_menu_behavior() {
     if bash -c '
         source "$1/lib/utils.sh"
@@ -257,9 +284,15 @@ check_completion_behavior() {
     fi
 
     if bash -c 'source "$1"; COMP_WORDS=(scat update ""); COMP_CWORD=2; _scat_completion; [[ " ${COMPREPLY[*]} " == *" rollback "* ]]' _ "$PROJECT_ROOT/packaging/completions/scat.bash"; then
-        pass "scat 补全提供更新子命令"
+        fail "scat 补全不再提供回退命令"
     else
-        fail "scat 补全提供更新子命令"
+        pass "scat 补全不再提供回退命令"
+    fi
+
+    if bash -c 'source "$1"; COMP_WORDS=(scat update ""); COMP_CWORD=2; _scat_completion; [[ " ${COMPREPLY[*]} " == *" check "* && " ${COMPREPLY[*]} " == *" apply "* ]]' _ "$PROJECT_ROOT/packaging/completions/scat.bash"; then
+        pass "scat 补全提供检查与安装更新命令"
+    else
+        fail "scat 补全提供检查与安装更新命令"
     fi
 }
 
@@ -285,6 +318,7 @@ check_source_safety
 check_utils_behavior
 check_agent_command_behavior
 check_release_behavior
+check_legacy_layout_migration_behavior
 check_update_menu_behavior
 check_doctor_behavior
 check_config_source_behavior
@@ -303,6 +337,10 @@ assert_contains_literal "main.sh" 'scat doctor' "命令行提供运行环境检�
 assert_contains_literal "lib/cleanup.sh" 'systemd-tmpfiles --clean' "临时文件清理使用系统规则"
 assert_not_contains "lib/cleanup.sh" 'docker volume prune' "空间清理不删除 Docker 卷"
 assert_not_contains "lib/cleanup.sh" 'docker system prune' "空间清理不执行 Docker 全量清理"
+assert_not_contains "README.md" 'update rollback' "用户文档不再提供版本回退"
+assert_not_contains "main.sh" 'server_cat_update_rollback' "命令行不再保留版本回退"
+assert_not_contains "packaging/completions/scat.bash" 'rollback' "补全不再包含版本回退"
+assert_not_contains "lib/release.sh" 'server_cat_update_rollback' "在线更新不再保留版本回退"
 assert_contains_literal "main.sh" 'dispatch_command "$@"' "主入口在菜单前分发子命令"
 assert_contains_literal "main.sh" 'server_cat_agent_dispatch "${@:2}"' "主入口委托 Agent 子命令分发"
 assert_contains_literal "packaging/install.sh" 'for command_name in scat server-cat' "首次安装提供 scat 与兼容命令"

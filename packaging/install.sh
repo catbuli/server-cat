@@ -116,23 +116,39 @@ curl --fail --silent --show-error --location --proto '=https' \
 [[ "$(sha256sum "$temporary_dir/server-cat.tar.zst" | awk '{print $1}')" == "$expected_sha256" ]]
 ! zstd --decompress --stdout "$temporary_dir/server-cat.tar.zst" | tar -tf - | grep -Eq '(^/|(^|/)\.\.(/|$))'
 
-mkdir -p "$INSTALL_ROOT/releases" /etc/server-cat /usr/local/sbin
-staging_dir="$INSTALL_ROOT/releases/.${version}.staging.$$"
+mkdir -p "$INSTALL_ROOT" /etc/server-cat /usr/local/sbin
+staging_dir="$INSTALL_ROOT/.${version}.staging.$$"
 mkdir -p "$staging_dir"
 zstd --decompress --stdout "$temporary_dir/server-cat.tar.zst" | tar -xf - -C "$staging_dir"
 [[ -x "$staging_dir/server-cat/main.sh" && -x "$staging_dir/server-cat/server-cat-agent" ]]
-mv "$staging_dir/server-cat" "$INSTALL_ROOT/releases/$version"
-rmdir "$staging_dir"
-ln -s "releases/$version" "$INSTALL_ROOT/.current.new"
-mv -Tf "$INSTALL_ROOT/.current.new" "$INSTALL_ROOT/current"
 install -m 0644 "$temporary_dir/keyring.gpg" "$KEYRING"
 if [[ -f /etc/server-cat/agent.toml ]]; then
     printf '保留已有配置: /etc/server-cat/agent.toml\n'
 else
-    install -m 0600 "$INSTALL_ROOT/current/templates/agent.toml.example" /etc/server-cat/agent.toml
+    install -m 0600 "$staging_dir/server-cat/templates/agent.toml.example" /etc/server-cat/agent.toml
     printf '已创建默认配置: /etc/server-cat/agent.toml\n'
 fi
 chmod 0600 /etc/server-cat/agent.toml
+"$staging_dir/server-cat/server-cat-agent" validate-config --config /etc/server-cat/agent.toml
+
+current_dir="$INSTALL_ROOT/current"
+previous_dir="$INSTALL_ROOT/.previous.$$"
+legacy_releases_dir=""
+if [[ -L "$current_dir" ]]; then
+    legacy_target="$(realpath "$current_dir" 2>/dev/null || readlink -f "$current_dir" 2>/dev/null || true)"
+    if [[ "$legacy_target" == "$INSTALL_ROOT/releases/"* ]]; then
+        legacy_releases_dir="$INSTALL_ROOT/releases"
+    fi
+fi
+if [[ -e "$current_dir" || -L "$current_dir" ]]; then
+    mv "$current_dir" "$previous_dir"
+fi
+if ! mv "$staging_dir/server-cat" "$current_dir"; then
+    [[ ! -e "$previous_dir" && ! -L "$previous_dir" ]] || mv "$previous_dir" "$current_dir"
+    exit 1
+fi
+rmdir "$staging_dir"
+
 install -m 0644 "$INSTALL_ROOT/current/systemd/server-cat-agent.service" /etc/systemd/system/server-cat-agent.service
 install -m 0644 "$INSTALL_ROOT/current/systemd/server-cat-agent.timer" /etc/systemd/system/server-cat-agent.timer
 for command_name in scat server-cat; do
@@ -148,6 +164,10 @@ install -m 0644 \
     /usr/share/bash-completion/completions/scat
 systemctl daemon-reload
 "$INSTALL_ROOT/current/server-cat-agent" validate-config --config /etc/server-cat/agent.toml
+rm -rf "$previous_dir"
+if [[ -n "$legacy_releases_dir" ]]; then
+    rm -rf "$legacy_releases_dir"
+fi
 printf '配置文件格式和阈值校验通过: /etc/server-cat/agent.toml\n'
 printf '重新打开 Bash 或执行 source /usr/share/bash-completion/completions/scat 后可使用 Tab 补全。\n'
 printf 'Server Cat %s 安装完成。\n' "$version"

@@ -60,7 +60,6 @@ sudo scat
 # 用于脚本化或排障的更新命令
 sudo scat update check
 sudo scat update apply
-sudo scat update rollback <版本>
 
 # 检查安装、配置、依赖、定时器与发布通道
 sudo scat doctor
@@ -125,7 +124,7 @@ certificate_warning_days = 14
 
 ## 更新与信任
 
-首次安装依赖 HTTPS。后续更新从 `packages.catbuli.com` 获取发布清单与安装包，客户端会验证 GPG 签名、文件大小和 SHA-256，再原子切换到新版本。
+首次安装依赖 HTTPS。后续更新从 `packages.catbuli.com` 获取发布清单与安装包，客户端会验证 GPG 签名、文件大小和 SHA-256，通过配置校验后替换当前版本。
 
 运行中的服务器不需要访问 GitHub 或保留 Git 仓库；GitHub 只用于项目源代码协作和发布构建。
 

@@ -21,7 +21,6 @@ function show_command_help() {
   sudo scat                       打开交互式菜单
   sudo scat update check          检查并验证 stable 发布版本
   sudo scat update apply          安装已验证的更新
-  sudo scat update rollback 版本   回退已安装版本
   sudo scat doctor                检查 Server Cat 运行环境
   sudo scat agent check           立即执行一次监控检查
   sudo scat agent enable          启用每分钟监控
@@ -62,13 +61,6 @@ function dispatch_command() {
                         return 1
                     }
                     server_cat_update_apply
-                    ;;
-                rollback)
-                    [[ $# -eq 3 ]] || {
-                        print_error "用法: scat update rollback <版本>"
-                        return 1
-                    }
-                    server_cat_update_rollback "$3"
                     ;;
                 *)
                     print_error "未知更新命令: ${subcommand:-未提供}"
@@ -481,6 +473,11 @@ if [[ $# -gt 0 ]] && [[ "$1" =~ ^(help|--help|-h)$ ]]; then
 fi
 
 require_root || exit 1
+
+server_cat_release_migrate_legacy_layout || exit 1
+if [[ "$SERVER_CAT_LEGACY_LAYOUT_MIGRATED" -eq 1 ]]; then
+    exec "$(server_cat_install_root)/current/main.sh" "$@"
+fi
 
 if [[ $# -gt 0 ]]; then
     dispatch_command "$@"

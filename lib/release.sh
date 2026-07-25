@@ -6,6 +6,7 @@ SERVER_CAT_RELEASE_BASE_URL_DEFAULT="https://packages.catbuli.com/server-cat"
 SERVER_CAT_RELEASE_KEYRING_DEFAULT="/etc/server-cat/release-keyring.gpg"
 SERVER_CAT_INSTALL_ROOT_DEFAULT="/opt/server-cat"
 SERVER_CAT_UPDATE_AVAILABLE=0
+SERVER_CAT_LEGACY_LAYOUT_MIGRATED=0
 
 server_cat_release_base_url() {
     printf '%s\n' "${SERVER_CAT_RELEASE_BASE_URL:-$SERVER_CAT_RELEASE_BASE_URL_DEFAULT}"
@@ -47,12 +48,53 @@ server_cat_installed_version() {
     local version
 
     install_root=$(server_cat_install_root)
+    install_root=$(server_cat_release_resolve_path "$install_root" || printf '%s\n' "$install_root")
     version_file="$install_root/current/VERSION"
     [[ -r "$version_file" ]] || return 1
 
     IFS= read -r version < "$version_file"
     server_cat_is_valid_version "$version" || return 1
     printf '%s\n' "$version"
+}
+
+server_cat_release_resolve_path() {
+    realpath "$1" 2>/dev/null || readlink -f "$1" 2>/dev/null
+}
+
+server_cat_release_migrate_legacy_layout() {
+    local install_root
+    local current_dir
+    local legacy_releases_dir
+    local legacy_target
+    local legacy_link
+
+    SERVER_CAT_LEGACY_LAYOUT_MIGRATED=0
+    install_root=$(server_cat_install_root)
+    install_root=$(server_cat_release_resolve_path "$install_root" || printf '%s\n' "$install_root")
+    current_dir="$install_root/current"
+    legacy_releases_dir="$install_root/releases"
+
+    [[ -L "$current_dir" ]] || return 0
+    legacy_target=$(server_cat_release_resolve_path "$current_dir" || true)
+    [[ -n "$legacy_target" && -d "$legacy_target" ]] || return 0
+    [[ "$legacy_target" == "$legacy_releases_dir"/* ]] || return 0
+
+    legacy_link="$install_root/.legacy-current.$$"
+    if ! mv "$current_dir" "$legacy_link"; then
+        print_error "无法迁移旧版安装目录"
+        return 1
+    fi
+    if ! mv "$legacy_target" "$current_dir"; then
+        mv "$legacy_link" "$current_dir" 2>/dev/null || true
+        print_error "无法迁移旧版安装目录"
+        return 1
+    fi
+
+    rm -f "$legacy_link"
+    rm -rf "$legacy_releases_dir"
+    SERVER_CAT_LEGACY_LAYOUT_MIGRATED=1
+    print_info "已迁移到简化安装目录"
+    return 0
 }
 
 server_cat_release_require_tools() {
@@ -243,7 +285,7 @@ server_cat_update_apply() {
     local base_url keyring install_root temporary_dir platform
     local channel_file channel_signature manifest_file manifest_signature
     local channel_data version manifest_path artifact_url artifact_sha256 artifact_size
-    local archive_path staging_dir release_dir current_link old_target
+    local archive_path staging_dir current_dir previous_dir
 
     base_url=$(server_cat_release_base_url)
     keyring=$(server_cat_release_keyring)
@@ -336,29 +378,47 @@ server_cat_update_apply() {
         return 1
     fi
 
-    mkdir -p "$install_root/releases"
-    release_dir="$install_root/releases/$version"
-    if [[ -d "$release_dir" ]]; then
-        print_info "版本已存在，切换到已验证版本: $version"
-    else
-        staging_dir="$install_root/releases/.${version}.staging.$$"
-        mkdir -p "$staging_dir"
-        if ! zstd --decompress --stdout "$archive_path" | tar -xf - -C "$staging_dir" ||
-            [[ ! -x "$staging_dir/server-cat/main.sh" ]] ||
-            [[ ! -x "$staging_dir/server-cat/server-cat-agent" ]]; then
-            print_error "解压后的发布包结构无效"
+    mkdir -p "$install_root"
+    staging_dir="$install_root/.${version}.staging.$$"
+    mkdir -p "$staging_dir"
+    if ! zstd --decompress --stdout "$archive_path" | tar -xf - -C "$staging_dir" ||
+        [[ ! -x "$staging_dir/server-cat/main.sh" ]] ||
+        [[ ! -x "$staging_dir/server-cat/server-cat-agent" ]]; then
+        print_error "解压后的发布包结构无效"
+        rm -rf "$staging_dir" "$temporary_dir"
+        return 1
+    fi
+
+    install -d -m 0755 /usr/local/sbin /etc/server-cat
+    if [[ ! -f /etc/server-cat/agent.toml ]]; then
+        install -m 0600 "$staging_dir/server-cat/templates/agent.toml.example" /etc/server-cat/agent.toml
+    fi
+    chmod 0600 /etc/server-cat/agent.toml
+    if ! "$staging_dir/server-cat/server-cat-agent" validate-config --config /etc/server-cat/agent.toml; then
+        print_error "新版本配置校验失败，未替换当前版本"
+        rm -rf "$staging_dir" "$temporary_dir"
+        return 1
+    fi
+
+    current_dir="$install_root/current"
+    previous_dir="$install_root/.previous.$$"
+    if [[ -e "$current_dir" || -L "$current_dir" ]]; then
+        if ! mv "$current_dir" "$previous_dir"; then
+            print_error "无法准备替换当前版本"
             rm -rf "$staging_dir" "$temporary_dir"
             return 1
         fi
-        mv "$staging_dir/server-cat" "$release_dir"
-        rmdir "$staging_dir"
     fi
+    if ! mv "$staging_dir/server-cat" "$current_dir"; then
+        if [[ -e "$previous_dir" || -L "$previous_dir" ]]; then
+            mv "$previous_dir" "$current_dir" 2>/dev/null || true
+        fi
+        print_error "无法替换当前版本"
+        rm -rf "$staging_dir" "$temporary_dir"
+        return 1
+    fi
+    rmdir "$staging_dir"
 
-    current_link="$install_root/current"
-    old_target=$(readlink "$current_link" 2>/dev/null || true)
-    ln -s "releases/$version" "$install_root/.current.new"
-    mv -Tf "$install_root/.current.new" "$current_link"
-    install -d -m 0755 /usr/local/sbin /etc/server-cat
     for command_name in scat server-cat; do
         cat > "/usr/local/sbin/$command_name" <<'EOF'
 #!/bin/bash
@@ -375,50 +435,16 @@ EOF
     if dpkg -s bash-completion > /dev/null 2>&1; then
         install -d -m 0755 /usr/share/bash-completion/completions
         install -m 0644 \
-            "$release_dir/completions/scat.bash" \
+            "$current_dir/completions/scat.bash" \
             /usr/share/bash-completion/completions/scat
     fi
-    if [[ ! -f /etc/server-cat/agent.toml ]]; then
-        install -m 0600 "$release_dir/templates/agent.toml.example" /etc/server-cat/agent.toml
-    fi
-    chmod 0600 /etc/server-cat/agent.toml
-    install -m 0644 "$release_dir/systemd/server-cat-agent.service" /etc/systemd/system/server-cat-agent.service
-    install -m 0644 "$release_dir/systemd/server-cat-agent.timer" /etc/systemd/system/server-cat-agent.timer
+    install -m 0644 "$current_dir/systemd/server-cat-agent.service" /etc/systemd/system/server-cat-agent.service
+    install -m 0644 "$current_dir/systemd/server-cat-agent.timer" /etc/systemd/system/server-cat-agent.timer
     systemctl daemon-reload
-    if ! "$release_dir/server-cat-agent" validate-config --config /etc/server-cat/agent.toml; then
-        print_error "新版本配置校验失败，正在恢复旧版本"
-        if [[ -n "$old_target" ]]; then
-            ln -s "$old_target" "$install_root/.current.rollback"
-            mv -Tf "$install_root/.current.rollback" "$current_link"
-        fi
-        rm -rf "$temporary_dir"
-        return 1
-    fi
-    rm -rf "$temporary_dir"
-    print_success "已切换到 Server Cat $version"
+    rm -rf "$previous_dir" "$temporary_dir"
+    print_success "已更新到 Server Cat $version"
     if dpkg -s bash-completion > /dev/null 2>&1; then
         print_info "重新打开 Bash 或执行 source /usr/share/bash-completion/completions/scat 后可使用 Tab 补全"
     fi
-    return 0
-}
-
-server_cat_update_rollback() {
-    local version="$1"
-    local install_root release_dir
-
-    server_cat_is_valid_version "$version" || {
-        print_error "回退版本号无效"
-        return 1
-    }
-    install_root=$(server_cat_install_root)
-    release_dir="$install_root/releases/$version"
-    [[ -x "$release_dir/main.sh" && -x "$release_dir/server-cat-agent" ]] || {
-        print_error "未找到已安装版本: $version"
-        return 1
-    }
-    ln -s "releases/$version" "$install_root/.current.rollback"
-    mv -Tf "$install_root/.current.rollback" "$install_root/current"
-    systemctl daemon-reload
-    print_success "已回退到 Server Cat $version"
     return 0
 }
