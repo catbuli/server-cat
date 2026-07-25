@@ -128,6 +128,10 @@ else
     install -m 0644 "$INSTALL_ROOT/current/configs/agent.toml.example" /etc/server-cat/agent.toml
     printf '已创建默认配置: /etc/server-cat/agent.toml\n'
 fi
+if [[ ! -f /etc/server-cat/smtp.env ]]; then
+    install -m 0600 "$INSTALL_ROOT/current/configs/smtp.env.example" /etc/server-cat/smtp.env
+    printf '已创建 SMTP 配置模板: /etc/server-cat/smtp.env\n'
+fi
 install -m 0644 "$INSTALL_ROOT/current/systemd/server-cat-agent.service" /etc/systemd/system/server-cat-agent.service
 install -m 0644 "$INSTALL_ROOT/current/systemd/server-cat-agent.timer" /etc/systemd/system/server-cat-agent.timer
 cat > /usr/local/sbin/server-cat <<'EOF'

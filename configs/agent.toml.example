@@ -17,7 +17,7 @@ certificate_warning_days = 14
 backup_max_age_hours = 26
 
 [email]
-enabled = true
-from = "server-cat@example.com"
-recipients = ["ops@example.com"]
+enabled = false
+from = ""
+recipients = []
 reminder_hours = 6
