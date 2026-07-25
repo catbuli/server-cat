@@ -9,7 +9,7 @@ Server Cat 是一个面向 Linux 服务器的本地管理工具，提供交互�
 - 本地备份与恢复：覆盖 SSH、Nginx、Docker、Certbot 与用户常用目录
 - 统一回滚：按功能声明执行对应的软件卸载或配置恢复
 - 安全更新：检查、验证、安装和回退已签名的发布包
-- 本地监控：磁盘空间、inode、内存、Swap 与系统负载
+- 本地监控：磁盘空间、inode、内存、Swap、系统负载与 TLS 证书到期
 - 邮件告警：支持 SMTP 告警、等级升级提醒与恢复通知
 
 ## 项目结构
@@ -85,9 +85,11 @@ http_urls = ["https://example.com/health"]
 http_timeout_seconds = 10
 docker_containers = ["redis", "grafana"]
 check_reboot_required = true
+certificate_paths = ["/etc/letsencrypt/live/example.com/fullchain.pem"]
+certificate_warning_days = 14
 ```
 
-服务未处于 `active`、HTTP 非成功响应、超时或连接失败、Docker 容器未运行均会产生严重告警。重启需求为警告级。
+服务未处于 `active`、HTTP 非成功响应、超时或连接失败、Docker 容器未运行、证书文件不存在或证书无效均会产生严重告警。证书将在预警天数内到期、重启需求为警告级。
 
 `sudo scat agent status` 会汇总定时器状态、实际巡检间隔与上次执行时间、已配置巡检目标、邮件开关和当前活跃告警。
 

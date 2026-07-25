@@ -67,6 +67,10 @@ struct CheckConfig {
     docker_containers: Vec<String>,
     #[serde(default)]
     check_reboot_required: bool,
+    #[serde(default)]
+    certificate_paths: Vec<String>,
+    #[serde(default = "default_certificate_warning_days")]
+    certificate_warning_days: u64,
 }
 
 impl Default for CheckConfig {
@@ -77,6 +81,8 @@ impl Default for CheckConfig {
             http_timeout_seconds: default_http_timeout_seconds(),
             docker_containers: Vec::new(),
             check_reboot_required: false,
+            certificate_paths: Vec::new(),
+            certificate_warning_days: default_certificate_warning_days(),
         }
     }
 }
@@ -87,6 +93,10 @@ fn default_http_timeout_seconds() -> u64 {
 
 fn default_swap_warning_percent() -> u8 {
     80
+}
+
+fn default_certificate_warning_days() -> u64 {
+    14
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -402,6 +412,17 @@ fn validate_config(config: &Config) -> Result<(), String> {
         }
     }
 
+    if config.checks.certificate_warning_days == 0 || config.checks.certificate_warning_days > 365 {
+        return Err("checks.certificate_warning_days 必须在 1 到 365 之间".to_owned());
+    }
+
+    validate_unique_values(&config.checks.certificate_paths, "checks.certificate_paths")?;
+    for path in &config.checks.certificate_paths {
+        if !Path::new(path).is_absolute() {
+            return Err(format!("checks.certificate_paths 必须使用绝对路径: {path}"));
+        }
+    }
+
     Ok(())
 }
 
@@ -679,6 +700,10 @@ fn format_agent_status(
             format_target_list(&config.checks.docker_containers)
         ),
         format!(
+            "- TLS 证书: {}",
+            format_target_list(&config.checks.certificate_paths)
+        ),
+        format!(
             "- 重启需求: {}",
             if config.checks.check_reboot_required {
                 "检查"
@@ -842,6 +867,11 @@ fn collect_alerts(config: &Config) -> Result<Vec<DetectedAlert>, String> {
         &config.checks.docker_containers,
     ));
 
+    alerts.extend(collect_certificate_alerts(
+        &config.checks.certificate_paths,
+        config.checks.certificate_warning_days,
+    ));
+
     if config.checks.check_reboot_required && Path::new("/var/run/reboot-required").exists() {
         alerts.push(DetectedAlert {
             key: "system:reboot-required".to_owned(),
@@ -888,6 +918,79 @@ fn collect_docker_container_alerts(containers: &[String]) -> Vec<DetectedAlert> 
     }
 
     alerts
+}
+
+fn collect_certificate_alerts(paths: &[String], warning_days: u64) -> Vec<DetectedAlert> {
+    let mut alerts = Vec::new();
+    let warning_seconds = warning_days.saturating_mul(24 * 60 * 60);
+
+    for path in paths {
+        if !Path::new(path).is_file() {
+            alerts.push(DetectedAlert {
+                key: format!("certificate:{path}"),
+                level: AlertLevel::Critical,
+                label: format!("TLS 证书 {path}"),
+                message: format!("TLS 证书文件不存在或不是常规文件: {path}"),
+            });
+            continue;
+        }
+
+        match certificate_valid_for(path, warning_seconds) {
+            Ok(true) => {}
+            Ok(false) => match certificate_valid_for(path, 0) {
+                Ok(true) => alerts.push(DetectedAlert {
+                    key: format!("certificate:{path}"),
+                    level: AlertLevel::Warning,
+                    label: format!("TLS 证书 {path}"),
+                    message: format!("TLS 证书将在 {warning_days} 天内到期: {path}"),
+                }),
+                Ok(false) => alerts.push(DetectedAlert {
+                    key: format!("certificate:{path}"),
+                    level: AlertLevel::Critical,
+                    label: format!("TLS 证书 {path}"),
+                    message: format!("TLS 证书已过期: {path}"),
+                }),
+                Err(reason) => alerts.push(certificate_check_error(path, reason)),
+            },
+            Err(reason) => alerts.push(certificate_check_error(path, reason)),
+        }
+    }
+
+    alerts
+}
+
+fn certificate_valid_for(path: &str, seconds: u64) -> Result<bool, String> {
+    let seconds = seconds.to_string();
+    let output = Command::new("openssl")
+        .args(["x509", "-in", path, "-noout", "-checkend", &seconds])
+        .output()
+        .map_err(|error| format!("无法执行 openssl: {error}"))?;
+
+    if output.status.success() {
+        Ok(true)
+    } else {
+        let validation = Command::new("openssl")
+            .args(["x509", "-in", path, "-noout"])
+            .output()
+            .map_err(|error| format!("无法执行 openssl: {error}"))?;
+        if validation.status.success() {
+            Ok(false)
+        } else {
+            Err(format!(
+                "无法读取有效 TLS 证书: {}",
+                command_failure_reason(&validation)
+            ))
+        }
+    }
+}
+
+fn certificate_check_error(path: &str, reason: String) -> DetectedAlert {
+    DetectedAlert {
+        key: format!("certificate:{path}"),
+        level: AlertLevel::Critical,
+        label: format!("TLS 证书 {path}"),
+        message: format!("无法检查 TLS 证书 {path}: {reason}"),
+    }
 }
 
 fn ensure_docker_available() -> Result<(), String> {
@@ -1379,13 +1482,15 @@ reminder_hours = 6
         assert_eq!(config.checks.http_timeout_seconds, 10);
         assert!(config.checks.docker_containers.is_empty());
         assert!(!config.checks.check_reboot_required);
+        assert!(config.checks.certificate_paths.is_empty());
+        assert_eq!(config.checks.certificate_warning_days, 14);
         assert_eq!(config.thresholds.swap_warning_percent, 80);
     }
 
     #[test]
     fn accepts_valid_service_and_http_checks() {
         let configuration = format!(
-            "{VALID_CONFIG}\n[checks]\nsystemd_services = [\"nginx\"]\nhttp_urls = [\"https://example.com/health\"]\nhttp_timeout_seconds = 10\ndocker_containers = [\"redis\"]\ncheck_reboot_required = true\n"
+            "{VALID_CONFIG}\n[checks]\nsystemd_services = [\"nginx\"]\nhttp_urls = [\"https://example.com/health\"]\nhttp_timeout_seconds = 10\ndocker_containers = [\"redis\"]\ncheck_reboot_required = true\ncertificate_paths = [\"/etc/letsencrypt/live/example.com/fullchain.pem\"]\ncertificate_warning_days = 14\n"
         );
         let config: Config = toml::from_str(&configuration).expect("configuration parses");
         assert!(validate_config(&config).is_ok());
@@ -1405,12 +1510,16 @@ reminder_hours = 6
         let invalid_container = format!(
             "{VALID_CONFIG}\n[checks]\nsystemd_services = []\nhttp_urls = []\nhttp_timeout_seconds = 10\ndocker_containers = [\"redis;rm\"]\n"
         );
+        let invalid_certificate = format!(
+            "{VALID_CONFIG}\n[checks]\ncertificate_paths = [\"relative/fullchain.pem\"]\ncertificate_warning_days = 14\n"
+        );
 
         for configuration in [
             invalid_service,
             invalid_url,
             duplicate_service,
             invalid_container,
+            invalid_certificate,
         ] {
             let config: Config = toml::from_str(&configuration).expect("configuration parses");
             assert!(validate_config(&config).is_err());
@@ -1481,6 +1590,18 @@ reminder_hours = 6
     }
 
     #[test]
+    fn reports_missing_certificate_as_critical_alert() {
+        let alerts = collect_certificate_alerts(
+            &["/definitely-not-a-server-cat-certificate.pem".to_owned()],
+            14,
+        );
+
+        assert_eq!(alerts.len(), 1);
+        assert_eq!(alerts[0].level, AlertLevel::Critical);
+        assert!(alerts[0].message.contains("证书文件不存在"));
+    }
+
+    #[test]
     fn critical_threshold_overrides_warning_threshold() {
         let mut alerts = Vec::new();
         add_percent_alert(
@@ -1514,7 +1635,7 @@ reminder_hours = 6
     #[test]
     fn status_output_summarizes_timer_targets_and_active_alerts() {
         let configuration = format!(
-            "{VALID_CONFIG}\n[checks]\nsystemd_services = [\"nginx\"]\nhttp_urls = [\"https://example.com/health\"]\ndocker_containers = [\"redis\"]\ncheck_reboot_required = true\n"
+            "{VALID_CONFIG}\n[checks]\nsystemd_services = [\"nginx\"]\nhttp_urls = [\"https://example.com/health\"]\ndocker_containers = [\"redis\"]\ncheck_reboot_required = true\ncertificate_paths = [\"/etc/letsencrypt/live/example.com/fullchain.pem\"]\n"
         );
         let config: Config = toml::from_str(&configuration).expect("configuration parses");
         let mut state = AgentState::default();
@@ -1542,7 +1663,7 @@ reminder_hours = 6
                 "Fri 2026-07-25 10:00:00 CST",
                 "已启用",
             ),
-            "Server Cat Agent 状态\n定时器: enabled (active)\n上次定时触发: Fri 2026-07-25 10:00:00 CST\n下次定时触发: Fri 2026-07-25 10:01:00 CST\n实际巡检间隔: 60 秒\n上次实际巡检: Fri 2026-07-25 10:00:00 CST\n邮件通知: 已启用\n巡检目标:\n- systemd 服务: nginx\n- HTTP 地址: https://example.com/health\n- Docker 容器: redis\n- 重启需求: 检查\n当前告警: 1 项\n- [严重] Docker 容器 redis 未处于运行状态"
+            "Server Cat Agent 状态\n定时器: enabled (active)\n上次定时触发: Fri 2026-07-25 10:00:00 CST\n下次定时触发: Fri 2026-07-25 10:01:00 CST\n实际巡检间隔: 60 秒\n上次实际巡检: Fri 2026-07-25 10:00:00 CST\n邮件通知: 已启用\n巡检目标:\n- systemd 服务: nginx\n- HTTP 地址: https://example.com/health\n- Docker 容器: redis\n- TLS 证书: /etc/letsencrypt/live/example.com/fullchain.pem\n- 重启需求: 检查\n当前告警: 1 项\n- [严重] Docker 容器 redis 未处于运行状态"
         );
     }
 

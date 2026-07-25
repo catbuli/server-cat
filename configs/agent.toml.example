@@ -27,3 +27,5 @@ http_urls = []
 http_timeout_seconds = 10
 docker_containers = []
 check_reboot_required = false
+certificate_paths = []
+certificate_warning_days = 14
