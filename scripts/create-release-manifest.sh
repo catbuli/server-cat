@@ -53,7 +53,7 @@ jq -n \
         schema_version: 1,
         version: $version,
         published_at: $published_at,
-        minimum_os: "ubuntu-24.04",
+        supported_operating_systems: ["ubuntu", "debian"],
         artifacts: {
             ($platform): {
                 url: $url,

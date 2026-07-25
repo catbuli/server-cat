@@ -8,9 +8,17 @@ PRIORITY=10
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &> /dev/null && pwd)"
 source "$SCRIPT_DIR/../lib/utils.sh"
+source "$SCRIPT_DIR/../lib/platform.sh"
 source "$SCRIPT_DIR/../lib/backup_tools.sh"
 
 function install_docker() {
+    local docker_distribution
+
+    docker_distribution=$(server_cat_platform_docker_distribution) || {
+        print_error "当前系统不支持 Docker 官方仓库安装: $(server_cat_platform_description)"
+        return 1
+    }
+
     echo "======================================"
     echo "  📦 Docker 安装脚本"
     echo "======================================"
@@ -34,7 +42,7 @@ function install_docker() {
 
     print_step "[4/8] 添加 Docker 官方 GPG 密钥..."
     install -m 0755 -d /etc/apt/keyrings
-    if ! curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg; then
+    if ! curl -fsSL "https://download.docker.com/linux/$docker_distribution/gpg" | gpg --dearmor -o /etc/apt/keyrings/docker.gpg; then
         print_error "GPG 密钥获取失败"
         return 1
     fi
@@ -42,7 +50,7 @@ function install_docker() {
 
     print_step "[5/8] 设置 Docker apt 仓库..."
     echo \
-      "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
+      "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/$docker_distribution \
       $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | \
       tee /etc/apt/sources.list.d/docker.list > /dev/null
 
