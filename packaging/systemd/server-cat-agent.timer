@@ -1,0 +1,11 @@
+[Unit]
+Description=Run Server Cat monitoring check every minute
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=1min
+Persistent=true
+Unit=server-cat-agent.service
+
+[Install]
+WantedBy=timers.target

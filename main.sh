@@ -1,11 +1,6 @@
 #!/bin/bash
 # Server Toolkit - 主入口脚本
 
-if [[ $EUID -ne 0 ]]; then
-   echo "🚫 错误：此脚本必须使用 sudo 或以 root 身份运行。"
-   exit 1
-fi
-
 # 获取脚本真实目录（支持符号链接）
 SCRIPT_SOURCE="$(readlink -f "${BASH_SOURCE[0]}")"
 SCRIPT_DIR="$( cd "$( dirname "$SCRIPT_SOURCE" )" &> /dev/null && pwd )"
@@ -15,6 +10,76 @@ BACKUPS_DIR="$SCRIPT_DIR/backups"
 CONFIGS_DIR="$SCRIPT_DIR/configs"
 
 source "$SCRIPT_DIR/lib/utils.sh"
+source "$SCRIPT_DIR/lib/release.sh"
+
+function show_command_help() {
+    cat <<'EOF'
+用法:
+  sudo server-cat                       打开交互式菜单
+  sudo server-cat update check          检查并验证 stable 发布版本
+  sudo server-cat update apply          安装已验证的更新（即将提供）
+  sudo server-cat update rollback 版本   回退已安装版本（即将提供）
+  sudo server-cat agent status          查看监控 Agent 状态（即将提供）
+EOF
+}
+
+function require_root() {
+    if [[ $EUID -ne 0 ]]; then
+        print_error "此命令必须使用 sudo 或以 root 身份运行"
+        return 1
+    fi
+
+    return 0
+}
+
+function dispatch_command() {
+    local command="$1"
+    local subcommand="${2:-}"
+
+    case "$command" in
+        update)
+            case "$subcommand" in
+                check)
+                    [[ $# -eq 2 ]] || {
+                        print_error "用法: server-cat update check"
+                        return 1
+                    }
+                    server_cat_update_check
+                    ;;
+                apply)
+                    [[ $# -eq 2 ]] || {
+                        print_error "用法: server-cat update apply"
+                        return 1
+                    }
+                    server_cat_update_apply
+                    ;;
+                rollback)
+                    [[ $# -eq 3 ]] || {
+                        print_error "用法: server-cat update rollback <版本>"
+                        return 1
+                    }
+                    server_cat_update_rollback "$3"
+                    ;;
+                *)
+                    print_error "未知更新命令: ${subcommand:-未提供}"
+                    return 1
+                    ;;
+            esac
+            ;;
+        agent)
+            print_warning "Rust Agent 尚未发布，当前不能执行 agent 命令"
+            return 1
+            ;;
+        help|--help|-h)
+            show_command_help
+            ;;
+        *)
+            print_error "未知命令: $command"
+            show_command_help
+            return 1
+            ;;
+    esac
+}
 
 function setup_permissions() {
     chmod +x "$SCRIPT_DIR"/modules/*.sh 2>/dev/null || true
@@ -392,5 +457,17 @@ function main_menu() {
         esac
     done
 }
+
+if [[ $# -gt 0 ]] && [[ "$1" =~ ^(help|--help|-h)$ ]]; then
+    show_command_help
+    exit 0
+fi
+
+require_root || exit 1
+
+if [[ $# -gt 0 ]]; then
+    dispatch_command "$@"
+    exit $?
+fi
 
 main_menu

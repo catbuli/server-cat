@@ -1,0 +1,155 @@
+name: Release Server Cat
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "发布版本，例如 0.1.0"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: server-cat-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Build, sign and publish
+    runs-on: ubuntu-24.04
+    environment: apt-production
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install release tools
+        run: sudo apt-get update && sudo apt-get install -y zstd
+
+      - name: Derive release version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            version="${{ inputs.version }}"
+          fi
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z][0-9A-Za-z.-]*)?$ ]]
+          printf 'value=%s\n' "$version" >> "$GITHUB_OUTPUT"
+
+      - name: Test and build Linux Agent
+        run: |
+          set -euo pipefail
+          bash tests/run_checks.sh
+          cargo test --workspace
+          cargo build --release --package server-cat-agent
+
+      - name: Build release package and manifests
+        env:
+          VERSION: ${{ steps.version.outputs.value }}
+        run: |
+          set -euo pipefail
+          release_dir="dist/releases/$VERSION"
+          mkdir -p "$release_dir"
+          bash scripts/build-release.sh \
+            "$VERSION" \
+            linux-amd64 \
+            target/release/server-cat-agent \
+            "$release_dir"
+          bash scripts/create-release-manifest.sh \
+            "$VERSION" \
+            linux-amd64 \
+            "$release_dir/server-cat-linux-amd64.tar.zst" \
+            "$release_dir/manifest.json"
+          sha256sum "$release_dir/server-cat-linux-amd64.tar.zst" > "$release_dir/sha256sums.txt"
+          mkdir -p dist/channels
+          jq -n \
+            --arg version "$VERSION" \
+            --arg manifest "releases/$VERSION/manifest.json" \
+            '{schema_version: 1, channel: "stable", version: $version, manifest: $manifest}' \
+            > dist/channels/stable.json
+
+      - name: Import signing key and sign manifests
+        env:
+          VERSION: ${{ steps.version.outputs.value }}
+          SIGNING_SUBKEY: ${{ secrets.SERVER_CAT_RELEASE_SIGNING_SUBKEY }}
+          SIGNING_PASSPHRASE: ${{ secrets.SERVER_CAT_RELEASE_SIGNING_PASSPHRASE }}
+        run: |
+          set -euo pipefail
+          export GNUPGHOME="$RUNNER_TEMP/server-cat-gnupg"
+          install -d -m 700 "$GNUPGHOME"
+          printf '%s' "$SIGNING_SUBKEY" > "$RUNNER_TEMP/signing-subkey.asc"
+          gpg --batch --import "$RUNNER_TEMP/signing-subkey.asc"
+          signing_fingerprint="$(gpg --with-colons --list-secret-keys | awk -F: '$1 == "ssb" {subkey=1; next} subkey && $1 == "fpr" {print $10; exit}')"
+          [[ -n "$signing_fingerprint" ]]
+          for manifest in "dist/releases/$VERSION/manifest.json" dist/channels/stable.json; do
+            gpg --batch --yes --pinentry-mode loopback \
+              --passphrase "$SIGNING_PASSPHRASE" \
+              --local-user "${signing_fingerprint}!" \
+              --armor --detach-sign "$manifest"
+          done
+          gpg --batch --yes --output "$RUNNER_TEMP/release-keyring.gpg" --export
+          gpgv --keyring "$RUNNER_TEMP/release-keyring.gpg" \
+            "dist/releases/$VERSION/manifest.json.asc" \
+            "dist/releases/$VERSION/manifest.json"
+          gpgv --keyring "$RUNNER_TEMP/release-keyring.gpg" \
+            dist/channels/stable.json.asc \
+            dist/channels/stable.json
+
+      - name: Configure SSH publisher access
+        env:
+          DEPLOY_KEY: ${{ secrets.SERVER_CAT_APT_DEPLOY_KEY }}
+          KNOWN_HOSTS: ${{ secrets.SERVER_CAT_APT_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          install -d -m 700 "$HOME/.ssh"
+          printf '%s\n' "$DEPLOY_KEY" > "$HOME/.ssh/server-cat-publisher"
+          printf '%s\n' "$KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/server-cat-publisher" "$HOME/.ssh/known_hosts"
+
+      - name: Publish immutable release and switch stable channel
+        env:
+          VERSION: ${{ steps.version.outputs.value }}
+          HOST: ${{ vars.SERVER_CAT_APT_HOST }}
+          PORT: ${{ vars.SERVER_CAT_APT_PORT }}
+          USER: ${{ vars.SERVER_CAT_APT_USER }}
+          REPOSITORY: ${{ vars.SERVER_CAT_APT_REPOSITORY }}
+        run: |
+          set -euo pipefail
+          [[ "$HOST" =~ ^[A-Za-z0-9.-]+$ ]]
+          [[ "$PORT" =~ ^[0-9]+$ ]]
+          [[ "$USER" =~ ^[A-Za-z0-9_-]+$ ]]
+          [[ "$REPOSITORY" =~ ^/[A-Za-z0-9._/-]+$ ]]
+          remote_base="$REPOSITORY/server-cat"
+          target="$USER@$HOST"
+          ssh_options=(-i "$HOME/.ssh/server-cat-publisher" -p "$PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes)
+          scp_options=(-i "$HOME/.ssh/server-cat-publisher" -P "$PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes)
+          ssh "${ssh_options[@]}" "$target" "mkdir -p '$remote_base/releases' '$remote_base/channels'"
+          rsync -az --checksum -e "ssh ${ssh_options[*]}" \
+            "dist/releases/$VERSION/" "$target:$remote_base/releases/$VERSION/"
+          scp "${scp_options[@]}" dist/channels/stable.json.asc "$target:$remote_base/channels/stable.json.asc"
+          scp "${scp_options[@]}" dist/channels/stable.json "$target:$remote_base/channels/stable.json"
+
+      - name: Verify public release endpoint
+        env:
+          VERSION: ${{ steps.version.outputs.value }}
+        run: |
+          set -euo pipefail
+          export GNUPGHOME="$RUNNER_TEMP/server-cat-gnupg"
+          curl --fail --silent --show-error --location \
+            --output "$RUNNER_TEMP/stable.json" \
+            https://packages.catbuli.com/server-cat/channels/stable.json
+          curl --fail --silent --show-error --location \
+            --output "$RUNNER_TEMP/stable.json.asc" \
+            https://packages.catbuli.com/server-cat/channels/stable.json.asc
+          gpgv --keyring "$RUNNER_TEMP/release-keyring.gpg" \
+            "$RUNNER_TEMP/stable.json.asc" "$RUNNER_TEMP/stable.json"
+          test "$(jq -r .version "$RUNNER_TEMP/stable.json")" = "$VERSION"

@@ -1,0 +1,23 @@
+[agent]
+channel = "stable"
+state_dir = "/var/lib/server-cat"
+
+[schedule]
+interval_seconds = 60
+update_check_interval_hours = 6
+
+[thresholds]
+disk_warning_percent = 80
+disk_critical_percent = 90
+inode_warning_percent = 80
+inode_critical_percent = 90
+memory_warning_percent = 85
+load_warning_per_cpu = 2.0
+certificate_warning_days = 14
+backup_max_age_hours = 26
+
+[email]
+enabled = true
+from = "server-cat@example.com"
+recipients = ["ops@example.com"]
+reminder_hours = 6

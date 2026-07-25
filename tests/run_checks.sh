@@ -105,6 +105,14 @@ check_utils_behavior() {
     fi
 }
 
+check_release_behavior() {
+    if bash "$PROJECT_ROOT/tests/release_checks.sh"; then
+        pass "签名发布源检查验证有效清单并拒绝路径穿越"
+    else
+        fail "签名发布源检查验证有效清单并拒绝路径穿越"
+    fi
+}
+
 check_syntax \
     "$PROJECT_ROOT/main.sh" \
     "$PROJECT_ROOT"/lib/*.sh \
@@ -116,10 +124,14 @@ check_syntax \
 check_menu_metadata
 check_source_safety
 check_utils_behavior
+check_release_behavior
 
 assert_not_contains "configs/check_update.sh" 'reset --hard' "自更新不强制丢弃本地修改"
-assert_contains "configs/check_update.sh" 'pull --ff-only' "自更新只允许快进更新"
-assert_contains "configs/check_update.sh" 'status --porcelain' "自更新检测未提交修改"
+assert_not_contains "configs/check_update.sh" 'git -C' "生产更新不再依赖 Git 仓库"
+assert_contains_literal "configs/check_update.sh" 'server_cat_update_check' "菜单检查更新复用签名发布源"
+assert_contains_literal "main.sh" 'dispatch_command "$@"' "主入口在菜单前分发子命令"
+assert_contains_literal "lib/release.sh" 'gpgv --keyring' "更新检查使用独立公钥验证签名"
+assert_contains_literal "lib/release.sh" "--proto '=https'" "更新检查仅允许 HTTPS 发布源"
 assert_contains "lib/backup_tools.sh" 'get_real_home' "默认备份目录使用实际用户主目录"
 assert_contains "modules/ssh_config.sh" 'restart_ssh_service' "SSH 配置复用服务重启回退"
 assert_contains "backups/restore_backup.sh" 'restart_ssh_service' "SSH 恢复复用服务重启回退"

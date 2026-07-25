@@ -1,0 +1,10 @@
+[Unit]
+Description=Server Cat monitoring check
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+ExecStart=/opt/server-cat/current/server-cat/server-cat-agent check
+EnvironmentFile=-/etc/server-cat/smtp.env

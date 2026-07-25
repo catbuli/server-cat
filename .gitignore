@@ -1,4 +1,8 @@
 .DS_Store
 
+/docs/
+/docs-loacl/
+/target/
+
 ANENTS.md
 CLAUDE.md
