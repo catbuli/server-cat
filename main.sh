@@ -10,6 +10,7 @@ BACKUPS_DIR="$SCRIPT_DIR/backups"
 CONFIGS_DIR="$SCRIPT_DIR/configs"
 
 source "$SCRIPT_DIR/lib/utils.sh"
+source "$SCRIPT_DIR/lib/platform.sh"
 source "$SCRIPT_DIR/lib/release.sh"
 
 function show_command_help() {
@@ -436,12 +437,13 @@ function show_rollback_menu() {
 }
 
 function main_menu() {
+    server_cat_platform_require_supported || return 1
     mkdir -p "$SOFTWARE_DIR" "$MODULES_DIR" "$CONFIGS_DIR"
     setup_permissions
 
     while true; do
         local choice=$(show_menu \
-            "Ubuntu 24 服务器自动化工具集" \
+            "Ubuntu / Debian 服务器管理工具" \
             "${GREEN}" \
             "退出" \
             "常用软件" "常用设置" "数据备份" "系统设置" "卸载")

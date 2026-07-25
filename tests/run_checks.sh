@@ -113,9 +113,18 @@ check_release_behavior() {
     fi
 }
 
+check_platform_behavior() {
+    if bash "$PROJECT_ROOT/tests/platform_checks.sh"; then
+        pass "发行版兼容层识别支持范围并拒绝未验证系统"
+    else
+        fail "发行版兼容层识别支持范围并拒绝未验证系统"
+    fi
+}
+
 check_syntax \
     "$PROJECT_ROOT/main.sh" \
     "$PROJECT_ROOT"/lib/*.sh \
+    "$PROJECT_ROOT/packaging/install.sh" \
     "$PROJECT_ROOT"/modules/*.sh \
     "$PROJECT_ROOT"/softwares/*.sh \
     "$PROJECT_ROOT"/configs/*.sh \
@@ -125,6 +134,7 @@ check_menu_metadata
 check_source_safety
 check_utils_behavior
 check_release_behavior
+check_platform_behavior
 
 assert_not_contains "configs/check_update.sh" 'reset --hard' "自更新不强制丢弃本地修改"
 assert_not_contains "configs/check_update.sh" 'git -C' "生产更新不再依赖 Git 仓库"
