@@ -75,14 +75,14 @@ rmdir "$staging_dir"
 ln -s "releases/$version" "$INSTALL_ROOT/.current.new"
 mv -Tf "$INSTALL_ROOT/.current.new" "$INSTALL_ROOT/current"
 install -m 0644 "$temporary_dir/keyring.gpg" "$KEYRING"
-install -m 0644 "$INSTALL_ROOT/current/server-cat/configs/agent.toml.example" /etc/server-cat/agent.toml
-install -m 0644 "$INSTALL_ROOT/current/server-cat/systemd/server-cat-agent.service" /etc/systemd/system/server-cat-agent.service
-install -m 0644 "$INSTALL_ROOT/current/server-cat/systemd/server-cat-agent.timer" /etc/systemd/system/server-cat-agent.timer
+install -m 0644 "$INSTALL_ROOT/current/configs/agent.toml.example" /etc/server-cat/agent.toml
+install -m 0644 "$INSTALL_ROOT/current/systemd/server-cat-agent.service" /etc/systemd/system/server-cat-agent.service
+install -m 0644 "$INSTALL_ROOT/current/systemd/server-cat-agent.timer" /etc/systemd/system/server-cat-agent.timer
 cat > /usr/local/sbin/server-cat <<'EOF'
 #!/bin/bash
-exec /opt/server-cat/current/server-cat/main.sh "$@"
+exec /opt/server-cat/current/main.sh "$@"
 EOF
 chmod 0755 /usr/local/sbin/server-cat
 systemctl daemon-reload
-"$INSTALL_ROOT/current/server-cat/server-cat-agent" validate-config --config /etc/server-cat/agent.toml
+"$INSTALL_ROOT/current/server-cat-agent" validate-config --config /etc/server-cat/agent.toml
 printf 'Server Cat %s 安装完成。\n' "$version"

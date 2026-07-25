@@ -331,16 +331,16 @@ server_cat_update_apply() {
     install -d -m 0755 /usr/local/sbin /etc/server-cat
     cat > /usr/local/sbin/server-cat <<'EOF'
 #!/bin/bash
-exec /opt/server-cat/current/server-cat/main.sh "$@"
+exec /opt/server-cat/current/main.sh "$@"
 EOF
     chmod 0755 /usr/local/sbin/server-cat
     if [[ ! -f /etc/server-cat/agent.toml ]]; then
-        install -m 0644 "$release_dir/server-cat/configs/agent.toml.example" /etc/server-cat/agent.toml
+        install -m 0644 "$release_dir/configs/agent.toml.example" /etc/server-cat/agent.toml
     fi
-    install -m 0644 "$release_dir/server-cat/systemd/server-cat-agent.service" /etc/systemd/system/server-cat-agent.service
-    install -m 0644 "$release_dir/server-cat/systemd/server-cat-agent.timer" /etc/systemd/system/server-cat-agent.timer
+    install -m 0644 "$release_dir/systemd/server-cat-agent.service" /etc/systemd/system/server-cat-agent.service
+    install -m 0644 "$release_dir/systemd/server-cat-agent.timer" /etc/systemd/system/server-cat-agent.timer
     systemctl daemon-reload
-    if ! "$release_dir/server-cat/server-cat-agent" validate-config --config /etc/server-cat/agent.toml; then
+    if ! "$release_dir/server-cat-agent" validate-config --config /etc/server-cat/agent.toml; then
         print_error "新版本配置校验失败，正在恢复旧版本"
         if [[ -n "$old_target" ]]; then
             ln -s "$old_target" "$install_root/.current.rollback"
@@ -364,7 +364,7 @@ server_cat_update_rollback() {
     }
     install_root=$(server_cat_install_root)
     release_dir="$install_root/releases/$version"
-    [[ -d "$release_dir/server-cat" ]] || {
+    [[ -x "$release_dir/main.sh" && -x "$release_dir/server-cat-agent" ]] || {
         print_error "未找到已安装版本: $version"
         return 1
     }
