@@ -124,6 +124,13 @@ struct AgentState {
     last_scheduled_check_unix: Option<u64>,
 }
 
+struct TimerStatus {
+    unit_file_state: String,
+    active_state: String,
+    last_trigger: String,
+    next_trigger: String,
+}
+
 #[derive(Debug)]
 struct SmtpSettings {
     host: String,
@@ -180,6 +187,12 @@ fn run(arguments: Vec<String>) -> Result<(), String> {
             validate_config(&config)?;
             run_check(&config, scheduled)
         }
+        "status" => {
+            let config_path = parse_config_path(&arguments[1..])?;
+            let config = load_config(&config_path)?;
+            validate_config(&config)?;
+            show_status(&config)
+        }
         "version" | "--version" | "-V" => {
             println!("server-cat-agent {}", env!("CARGO_PKG_VERSION"));
             Ok(())
@@ -193,7 +206,7 @@ fn run(arguments: Vec<String>) -> Result<(), String> {
 }
 
 fn usage() -> &'static str {
-    "用法:\n  server-cat-agent validate-config [--config 路径]\n  server-cat-agent validate-smtp [--config 路径]\n  server-cat-agent check [--config 路径]\n  server-cat-agent check --scheduled [--config 路径]\n  server-cat-agent version"
+    "用法:\n  server-cat-agent validate-config [--config 路径]\n  server-cat-agent validate-smtp [--config 路径]\n  server-cat-agent check [--config 路径]\n  server-cat-agent check --scheduled [--config 路径]\n  server-cat-agent status [--config 路径]\n  server-cat-agent version"
 }
 
 fn parse_config_path(arguments: &[String]) -> Result<String, String> {
@@ -443,6 +456,99 @@ fn run_check(config: &Config, scheduled: bool) -> Result<(), String> {
     save_state(&state_path, &state)?;
     println!("{check_result}");
     Ok(())
+}
+
+fn show_status(config: &Config) -> Result<(), String> {
+    let state_path = Path::new(&config.agent.state_dir).join("alerts.json");
+    let state = load_state(&state_path)?;
+    let timer = read_timer_status();
+
+    println!("{}", format_agent_status(config, &state, &timer));
+    Ok(())
+}
+
+fn read_timer_status() -> TimerStatus {
+    TimerStatus {
+        unit_file_state: read_timer_property("UnitFileState"),
+        active_state: read_timer_property("ActiveState"),
+        last_trigger: read_timer_property("LastTriggerUSec"),
+        next_trigger: read_timer_property("NextElapseUSecRealtime"),
+    }
+}
+
+fn read_timer_property(property: &str) -> String {
+    Command::new("systemctl")
+        .args([
+            "show",
+            "server-cat-agent.timer",
+            "--property",
+            property,
+            "--value",
+        ])
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .and_then(|output| String::from_utf8(output.stdout).ok())
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "未知".to_owned())
+}
+
+fn format_agent_status(config: &Config, state: &AgentState, timer: &TimerStatus) -> String {
+    let mut lines = vec![
+        "Server Cat Agent 状态".to_owned(),
+        format!("定时器: {} ({})", timer.unit_file_state, timer.active_state),
+        format!("上次定时触发: {}", timer.last_trigger),
+        format!("下次定时触发: {}", timer.next_trigger),
+        format!(
+            "邮件通知: {}",
+            if config.email.enabled {
+                "已启用"
+            } else {
+                "未启用"
+            }
+        ),
+        "巡检目标:".to_owned(),
+        format!(
+            "- systemd 服务: {}",
+            format_target_list(&config.checks.systemd_services)
+        ),
+        format!(
+            "- HTTP 地址: {}",
+            format_target_list(&config.checks.http_urls)
+        ),
+        format!(
+            "- Docker 容器: {}",
+            format_target_list(&config.checks.docker_containers)
+        ),
+        format!(
+            "- 重启需求: {}",
+            if config.checks.check_reboot_required {
+                "检查"
+            } else {
+                "未配置"
+            }
+        ),
+    ];
+
+    if state.alerts.is_empty() {
+        lines.push("当前告警: 无".to_owned());
+    } else {
+        lines.push(format!("当前告警: {} 项", state.alerts.len()));
+        for alert in state.alerts.values() {
+            lines.push(format!("- [{}] {}", alert.level.label(), alert.message));
+        }
+    }
+
+    lines.join("\n")
+}
+
+fn format_target_list(targets: &[String]) -> String {
+    if targets.is_empty() {
+        "未配置".to_owned()
+    } else {
+        targets.join(", ")
+    }
 }
 
 fn format_check_result(alerts: &[DetectedAlert], email_enabled: bool) -> String {
@@ -1175,6 +1281,35 @@ reminder_hours = 6
         assert_eq!(
             format_check_result(&alerts, false),
             "监控检查完成: 1 项指标处于告警状态，邮件通知未启用\n\n告警详情:\n- [严重] 磁盘 / 的磁盘使用率为 91%，警告阈值 80%，严重阈值 90%"
+        );
+    }
+
+    #[test]
+    fn status_output_summarizes_timer_targets_and_active_alerts() {
+        let configuration = format!(
+            "{VALID_CONFIG}\n[checks]\nsystemd_services = [\"nginx\"]\nhttp_urls = [\"https://example.com/health\"]\ndocker_containers = [\"redis\"]\ncheck_reboot_required = true\n"
+        );
+        let config: Config = toml::from_str(&configuration).expect("configuration parses");
+        let mut state = AgentState::default();
+        state.alerts.insert(
+            "docker:redis".to_owned(),
+            ActiveAlert {
+                level: AlertLevel::Critical,
+                label: "Docker 容器 redis".to_owned(),
+                message: "Docker 容器 redis 未处于运行状态".to_owned(),
+                last_sent_unix: Some(100),
+            },
+        );
+        let timer = TimerStatus {
+            unit_file_state: "enabled".to_owned(),
+            active_state: "active".to_owned(),
+            last_trigger: "Fri 2026-07-25 10:00:00 CST".to_owned(),
+            next_trigger: "Fri 2026-07-25 10:01:00 CST".to_owned(),
+        };
+
+        assert_eq!(
+            format_agent_status(&config, &state, &timer),
+            "Server Cat Agent 状态\n定时器: enabled (active)\n上次定时触发: Fri 2026-07-25 10:00:00 CST\n下次定时触发: Fri 2026-07-25 10:01:00 CST\n邮件通知: 已启用\n巡检目标:\n- systemd 服务: nginx\n- HTTP 地址: https://example.com/health\n- Docker 容器: redis\n- 重启需求: 检查\n当前告警: 1 项\n- [严重] Docker 容器 redis 未处于运行状态"
         );
     }
 

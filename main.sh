@@ -23,7 +23,7 @@ function show_command_help() {
   sudo scat agent check           立即执行一次监控检查
   sudo scat agent enable          启用每分钟监控
   sudo scat agent disable         停止并禁用每分钟监控
-  sudo scat agent status          查看监控定时器状态
+  sudo scat agent status          查看监控汇总状态
 EOF
 }
 
@@ -102,7 +102,7 @@ function dispatch_command() {
                         print_error "用法: scat agent status"
                         return 1
                     }
-                    systemctl status server-cat-agent.timer --no-pager
+                    /opt/server-cat/current/server-cat-agent status
                     ;;
                 *)
                     print_error "未知 Agent 命令: ${subcommand:-未提供}"
