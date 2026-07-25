@@ -12,6 +12,7 @@ CONFIGS_DIR="$SCRIPT_DIR/configs"
 source "$SCRIPT_DIR/lib/utils.sh"
 source "$SCRIPT_DIR/lib/platform.sh"
 source "$SCRIPT_DIR/lib/release.sh"
+source "$SCRIPT_DIR/lib/agent.sh"
 
 function show_command_help() {
     cat <<'EOF'
@@ -74,65 +75,7 @@ function dispatch_command() {
             esac
             ;;
         agent)
-            case "$subcommand" in
-                check)
-                    [[ $# -eq 2 ]] || {
-                        print_error "用法: scat agent check"
-                        return 1
-                    }
-                    /opt/server-cat/current/server-cat-agent check
-                    ;;
-                enable)
-                    [[ $# -eq 2 ]] || {
-                        print_error "用法: scat agent enable"
-                        return 1
-                    }
-                    /opt/server-cat/current/server-cat-agent validate-config || return 1
-                    /opt/server-cat/current/server-cat-agent validate-smtp || return 1
-                    systemctl enable --now server-cat-agent.timer
-                    print_success "已启用 Server Cat 每分钟监控"
-                    ;;
-                disable)
-                    [[ $# -eq 2 ]] || {
-                        print_error "用法: scat agent disable"
-                        return 1
-                    }
-                    systemctl disable --now server-cat-agent.timer
-                    print_success "已停止并禁用 Server Cat 每分钟监控"
-                    ;;
-                status)
-                    [[ $# -eq 2 ]] || {
-                        print_error "用法: scat agent status"
-                        return 1
-                    }
-                    /opt/server-cat/current/server-cat-agent status
-                    ;;
-                test-email)
-                    [[ $# -eq 2 ]] || {
-                        print_error "用法: scat agent test-email"
-                        return 1
-                    }
-                    /opt/server-cat/current/server-cat-agent test-email
-                    ;;
-                mute)
-                    [[ $# -eq 3 ]] || {
-                        print_error "用法: scat agent mute <时长>，例如 30m、2h、1d"
-                        return 1
-                    }
-                    /opt/server-cat/current/server-cat-agent mute "$3"
-                    ;;
-                unmute)
-                    [[ $# -eq 2 ]] || {
-                        print_error "用法: scat agent unmute"
-                        return 1
-                    }
-                    /opt/server-cat/current/server-cat-agent unmute
-                    ;;
-                *)
-                    print_error "未知 Agent 命令: ${subcommand:-未提供}"
-                    return 1
-                    ;;
-            esac
+            server_cat_agent_dispatch "${@:2}"
             ;;
         help|--help|-h)
             show_command_help

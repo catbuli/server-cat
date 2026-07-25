@@ -105,6 +105,14 @@ check_utils_behavior() {
     fi
 }
 
+check_agent_command_behavior() {
+    if bash -c 'source "$1/lib/utils.sh"; source "$1/lib/agent.sh"; SERVER_CAT_AGENT_BINARY=/usr/bin/true; server_cat_agent_dispatch check' _ "$PROJECT_ROOT"; then
+        pass "Agent 子命令通过独立分发层执行"
+    else
+        fail "Agent 子命令通过独立分发层执行"
+    fi
+}
+
 check_release_behavior() {
     if bash "$PROJECT_ROOT/tests/release_checks.sh"; then
         pass "签名发布源检查验证有效清单并拒绝路径穿越"
@@ -147,6 +155,7 @@ check_syntax \
 check_menu_metadata
 check_source_safety
 check_utils_behavior
+check_agent_command_behavior
 check_release_behavior
 check_completion_behavior
 check_platform_behavior
@@ -155,6 +164,7 @@ assert_not_contains "configs/check_update.sh" 'reset --hard' "自更新不强制
 assert_not_contains "configs/check_update.sh" 'git -C' "生产更新不再依赖 Git 仓库"
 assert_contains_literal "configs/check_update.sh" 'server_cat_update_check' "菜单检查更新复用签名发布源"
 assert_contains_literal "main.sh" 'dispatch_command "$@"' "主入口在菜单前分发子命令"
+assert_contains_literal "main.sh" 'server_cat_agent_dispatch "${@:2}"' "主入口委托 Agent 子命令分发"
 assert_contains_literal "packaging/install.sh" 'for command_name in scat server-cat' "首次安装提供 scat 与兼容命令"
 assert_contains_literal "lib/release.sh" 'for command_name in scat server-cat' "更新安装提供 scat 与兼容命令"
 assert_contains_literal "scripts/build-release.sh" 'packaging/completions/scat.bash' "发布包包含 scat 补全规则"
