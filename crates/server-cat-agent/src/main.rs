@@ -129,6 +129,10 @@ struct ActiveAlert {
     label: String,
     message: String,
     #[serde(default)]
+    first_detected_unix: Option<u64>,
+    #[serde(default)]
+    last_detected_unix: Option<u64>,
+    #[serde(default)]
     last_sent_unix: Option<u64>,
 }
 
@@ -504,19 +508,17 @@ fn run_check(config: &Config, scheduled: bool) -> Result<(), String> {
             )?;
         }
 
-        state.alerts.insert(
-            alert.key,
-            ActiveAlert {
-                level: alert.level,
-                label: alert.label,
-                message: alert.message,
-                last_sent_unix: if should_notify && smtp.is_some() {
-                    Some(now)
-                } else {
-                    previous.and_then(|previous| previous.last_sent_unix)
-                },
-            },
-        );
+        let last_sent_unix = if should_notify && smtp.is_some() {
+            Some(now)
+        } else {
+            previous
+                .as_ref()
+                .and_then(|previous| previous.last_sent_unix)
+        };
+        let alert_key = alert.key.clone();
+        let active_alert =
+            active_alert_from_detection(alert, previous.as_ref(), now, last_sent_unix);
+        state.alerts.insert(alert_key, active_alert);
     }
 
     let recovered_keys: Vec<String> = state
@@ -657,6 +659,12 @@ fn format_scheduled_check(timestamp: Option<u64>) -> String {
     format_unix_timestamp(timestamp)
 }
 
+fn format_optional_timestamp(timestamp: Option<u64>) -> String {
+    timestamp
+        .map(format_unix_timestamp)
+        .unwrap_or_else(|| "未记录".to_owned())
+}
+
 fn format_unix_timestamp(timestamp: u64) -> String {
     let date_argument = format!("@{timestamp}");
 
@@ -718,11 +726,22 @@ fn format_agent_status(
     } else {
         lines.push(format!("当前告警: {} 项", state.alerts.len()));
         for alert in state.alerts.values() {
-            lines.push(format!("- [{}] {}", alert.level.label(), alert.message));
+            lines.push(format_active_alert(alert));
         }
     }
 
     lines.join("\n")
+}
+
+fn format_active_alert(alert: &ActiveAlert) -> String {
+    format!(
+        "- [{}] {}\n  首次发现: {}\n  最近发现: {}\n  最近通知: {}",
+        alert.level.label(),
+        alert.message,
+        format_optional_timestamp(alert.first_detected_unix),
+        format_optional_timestamp(alert.last_detected_unix),
+        format_optional_timestamp(alert.last_sent_unix),
+    )
 }
 
 fn format_target_list(targets: &[String]) -> String {
@@ -1270,6 +1289,24 @@ fn should_notify_active(
         .is_none_or(|last_sent| now.saturating_sub(last_sent) >= reminder_seconds)
 }
 
+fn active_alert_from_detection(
+    detected: DetectedAlert,
+    previous: Option<&ActiveAlert>,
+    now: u64,
+    last_sent_unix: Option<u64>,
+) -> ActiveAlert {
+    ActiveAlert {
+        level: detected.level,
+        label: detected.label,
+        message: detected.message,
+        first_detected_unix: previous
+            .and_then(|previous| previous.first_detected_unix)
+            .or(Some(now)),
+        last_detected_unix: Some(now),
+        last_sent_unix,
+    }
+}
+
 fn load_smtp_settings() -> Result<SmtpSettings, String> {
     let values = load_smtp_environment()?;
     let host = required_smtp_value(&values, "SERVER_CAT_SMTP_HOST")?;
@@ -1645,7 +1682,9 @@ reminder_hours = 6
                 level: AlertLevel::Critical,
                 label: "Docker 容器 redis".to_owned(),
                 message: "Docker 容器 redis 未处于运行状态".to_owned(),
-                last_sent_unix: Some(100),
+                first_detected_unix: None,
+                last_detected_unix: None,
+                last_sent_unix: None,
             },
         );
         let timer = TimerStatus {
@@ -1663,7 +1702,7 @@ reminder_hours = 6
                 "Fri 2026-07-25 10:00:00 CST",
                 "已启用",
             ),
-            "Server Cat Agent 状态\n定时器: enabled (active)\n上次定时触发: Fri 2026-07-25 10:00:00 CST\n下次定时触发: Fri 2026-07-25 10:01:00 CST\n实际巡检间隔: 60 秒\n上次实际巡检: Fri 2026-07-25 10:00:00 CST\n邮件通知: 已启用\n巡检目标:\n- systemd 服务: nginx\n- HTTP 地址: https://example.com/health\n- Docker 容器: redis\n- TLS 证书: /etc/letsencrypt/live/example.com/fullchain.pem\n- 重启需求: 检查\n当前告警: 1 项\n- [严重] Docker 容器 redis 未处于运行状态"
+            "Server Cat Agent 状态\n定时器: enabled (active)\n上次定时触发: Fri 2026-07-25 10:00:00 CST\n下次定时触发: Fri 2026-07-25 10:01:00 CST\n实际巡检间隔: 60 秒\n上次实际巡检: Fri 2026-07-25 10:00:00 CST\n邮件通知: 已启用\n巡检目标:\n- systemd 服务: nginx\n- HTTP 地址: https://example.com/health\n- Docker 容器: redis\n- TLS 证书: /etc/letsencrypt/live/example.com/fullchain.pem\n- 重启需求: 检查\n当前告警: 1 项\n- [严重] Docker 容器 redis 未处于运行状态\n  首次发现: 未记录\n  最近发现: 未记录\n  最近通知: 未记录"
         );
     }
 
@@ -1702,6 +1741,31 @@ reminder_hours = 6
     }
 
     #[test]
+    fn active_alert_keeps_first_detection_and_updates_recent_detection() {
+        let previous = ActiveAlert {
+            level: AlertLevel::Warning,
+            label: "内存".to_owned(),
+            message: "内存使用率为 90%".to_owned(),
+            first_detected_unix: Some(100),
+            last_detected_unix: Some(150),
+            last_sent_unix: Some(150),
+        };
+        let detected = DetectedAlert {
+            key: "memory".to_owned(),
+            level: AlertLevel::Critical,
+            label: "内存".to_owned(),
+            message: "内存使用率为 95%".to_owned(),
+        };
+
+        let updated = active_alert_from_detection(detected, Some(&previous), 200, Some(200));
+
+        assert_eq!(updated.first_detected_unix, Some(100));
+        assert_eq!(updated.last_detected_unix, Some(200));
+        assert_eq!(updated.last_sent_unix, Some(200));
+        assert_eq!(updated.level, AlertLevel::Critical);
+    }
+
+    #[test]
     fn scheduled_check_without_state_is_reported_as_not_run() {
         assert_eq!(format_scheduled_check(None), "尚未执行");
     }
@@ -1723,6 +1787,8 @@ reminder_hours = 6
             level: AlertLevel::Warning,
             label: "内存".to_owned(),
             message: "内存使用率为 90%".to_owned(),
+            first_detected_unix: Some(100),
+            last_detected_unix: Some(100),
             last_sent_unix: Some(100),
         };
         assert!(should_notify_active(None, AlertLevel::Warning, 101, 3600));
