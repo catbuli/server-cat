@@ -1,210 +1,89 @@
-# Ubuntu 24 服务器自动化工具集
+# Server Cat
 
-一个模块化、可扩展的 Ubuntu 服务器管理自动化工具集，提供交互式菜单，简化服务器配置、软件安装和日常维护任务。
+Server Cat 是一个面向 Linux 服务器的本地管理工具，提供交互式维护菜单、签名更新和可选的常驻监控 Agent，适合个人服务器与小型部署环境。
 
-## 🚀 特性
+## 特性
 
-- **模块化设计**：功能分离清晰，易于维护和扩展
-- **交互式菜单**：友好的命令行界面，无需记忆复杂命令
-- **动态脚本发现**：自动识别并展示可用的安装脚本和配置任务
-- **全部安装**：支持一键安装所有软件
-- **自动权限管理**：首次运行自动设置脚本执行权限
+- 常用服务安装与维护：Docker、Nginx、Certbot、Bashtop
+- 系统基础配置：SSH、防火墙、Sudo 用户、用户目录、网络优化
+- 本地备份与恢复：覆盖 SSH、Nginx、Docker、Certbot 与用户常用目录
+- 统一回滚：按功能声明执行对应的软件卸载或配置恢复
+- 安全更新：检查、验证、安装和回退已签名的发布包
+- 本地监控：磁盘空间、inode、内存与系统负载
+- 邮件告警：支持 SMTP 告警、等级升级提醒与恢复通知
 
-## 📁 项目结构
+## 项目结构
 
-```
+```text
 server-cat/
-├── main.sh                 # 🚀 主入口脚本（交互式菜单）
-├── lib/                    # 工具函数库
-│   └── utils.sh           # 通用工具函数
-├── modules/                # 配置模块
-│   ├── firewall.sh        # UFW 防火墙配置
-│   ├── user_config.sh     # 用户管理（创建 sudo 用户）
-│   ├── ssh_config.sh      # SSH 配置
-│   ├── init_user_dirs.sh  # 初始化用户目录
-│   ├── backup_setup.sh    # 备份配置
-│   └── certbot_renew.sh   # Certbot 续期设置
-├── softwares/              # 软件安装脚本
-│   ├── install_docker.sh  # Docker 安装
-│   ├── install_nginx.sh   # Nginx 安装
-│   └── install_certbot.sh # Certbot 安装
-└── scripts/                # 服务器辅助脚本
-    └── certbot-renew.sh   # SSL 证书自动续期脚本
+├── main.sh                    # 本地 CLI 与交互式菜单入口
+├── modules/                   # 系统配置功能
+├── softwares/                 # 常用软件安装功能
+├── backups/                   # 本地备份与恢复功能
+├── configs/                   # Agent 与运行配置模板
+├── lib/                       # 公共功能与签名更新逻辑
+├── crates/server-cat-agent/   # 常驻监控 Agent
+├── packaging/                 # 安装器与 systemd 单元
+├── scripts/                   # 构建与发布辅助脚本
+└── tests/                     # Bash 与发布逻辑检查
 ```
 
-## 📖 使用指南
+## 支持范围
 
-### 快速开始
+当前支持具备 `apt` 与 `systemd` 的 Ubuntu、Debian 系统。所有管理操作均需要 root 权限。
 
-1. **下载项目到服务器**
+## 安装
+
+首次安装使用 HTTPS 获取安装器：
 
 ```bash
-cd ~
-wget <项目地址>
-# 或使用 git clone
-# git clone <repo-url> server-cat
+curl -fsSL https://packages.catbuli.com/server-cat/install.sh | sudo bash
 ```
 
-2. **进入项目目录并运行**
+安装完成后查看可用命令：
 
 ```bash
-cd server-cat
-sudo ./main.sh
+sudo server-cat --help
 ```
 
-首次运行会自动设置所有脚本的执行权限。
-
-### 主菜单
-
-```
-=====================================
-    Ubuntu 24 服务器自动化工具集
-=====================================
-1. 安装常用软件
-2. 常用设置
-3. 执行服务器脚本
-0. 退出
--------------------------------------
-```
-
-### 菜单说明
-
-#### 1️⃣ 安装常用软件
-
-```
-=====================================
-    📦 安装常用软件
-=====================================
-1. 全部安装
-2. Docker
-3. Nginx
-4. Certbot (SSL证书)
-0. 返回主菜单
-```
-
-- **全部安装**：按顺序自动安装所有软件，完成后显示统计结果
-
-#### 2️⃣ 常用设置
-
-```
-=====================================
-    🔧 常用设置
-=====================================
-1. 配置防火墙
-2. 创建 Sudo 用户
-3. 配置 SSH
-4. 配置备份
-5. 初始化用户目录
-0. 返回主菜单
-```
-
-#### 3️⃣ 执行服务器脚本
-
-运行服务器辅助脚本（如证书续期等）。
-
-## 🔧 扩展功能
-
-### 添加软件安装脚本
-
-在 `softwares/` 目录下创建脚本文件：
+## 常用操作
 
 ```bash
-#!/bin/bash
-# 软件描述
+# 打开交互式管理菜单
+sudo server-cat
 
-MENU_NAME="显示名称"
+# 检查、安装或回退已签名更新
+sudo server-cat update check
+sudo server-cat update apply
+sudo server-cat update rollback <版本>
 
-set -eo pipefail
-
-SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
-source "$SCRIPT_DIR/../lib/utils.sh"
-
-print_step "[1/2] 更新 apt..."
-apt-get update -qq
-
-print_step "[2/2] 安装软件..."
-apt-get install -y 软件名
-
-print_success "✅ 安装成功"
-exit 0
+# 管理本地监控 Agent
+sudo server-cat agent check
+sudo server-cat agent enable
+sudo server-cat agent disable
+sudo server-cat agent status
 ```
 
-### 添加配置模块
+## 监控与邮件
 
-在 `modules/` 目录下创建脚本文件：
+Agent 默认不启用邮件和定时运行。监控阈值位于 `/etc/server-cat/agent.toml`，SMTP 连接信息位于 `/etc/server-cat/smtp.env`。完成本机配置后，执行 `sudo server-cat agent enable` 启用定时监控。
 
-```bash
-#!/bin/bash
-# 模块描述
+## 更新与信任
 
-MENU_NAME="显示名称"
-MENU_FUNC="your_function_name"
+首次安装依赖 HTTPS。后续更新从 `packages.catbuli.com` 获取发布清单与安装包，客户端会验证 GPG 签名、文件大小和 SHA-256，再原子切换到新版本。
 
-function your_function_name() {
-    print_step "▶️  配置说明..."
+运行中的服务器不需要访问 GitHub 或保留 Git 仓库；GitHub 只用于项目源代码协作和发布构建。
 
-    # 配置逻辑
-    ...
-}
-```
+## 注意事项
 
-## 🎯 脚本编写规范
+- 软件安装、更新与邮件通知需要网络连接。
+- 建议先在测试机器验证新版本，再更新生产服务器。
+- 备份与恢复操作可能覆盖配置或数据，执行前请确认目标范围。
 
-| 规范 | 说明 |
-|------|------|
-| Shebang | `#!/bin/bash` |
-| 变量 | 全局大写 `SCRIPT_DIR`，局部小写 `local name` |
-| 错误处理 | 独立脚本使用 `set -eo pipefail` |
-| 输出函数 | `print_step`、`print_success`、`print_error`、`print_warning`、`print_info` |
-| 语言 | 所有用户可见信息使用中文 |
+## 贡献
 
-### 输出函数说明
+欢迎提交 Issue 与 Pull Request。请说明使用的发行版、复现步骤和期望行为；涉及系统配置、删除或网络暴露的改动应明确说明影响范围。
 
-```bash
-print_step "步骤标题"      # 黄色，带换行
-print_success "✓ 成功"     # 绿色
-print_error "✗ 失败"       # 红色
-print_warning "提示"       # 黄色
-print_info "信息"          # 蓝色
-```
+## 许可
 
-## 📝 使用示例
-
-### 初始化新服务器
-
-```bash
-sudo ./main.sh
-
-# 1. 选择 "安装常用软件" → "全部安装"
-# 2. 选择 "常用设置" → "配置防火墙"
-# 3. 选择 "常用设置" → "创建 Sudo 用户"
-```
-
-### 批量部署脚本
-
-```bash
-#!/bin/bash
-cd /path/to/server-cat
-
-# 执行配置模块
-source modules/firewall.sh
-configure_firewall
-
-# 安装软件
-bash softwares/install_docker.sh
-bash softwares/install_nginx.sh
-```
-
-## ⚠️ 注意事项
-
-1. **需要 root 权限**：所有操作都需要使用 `sudo`
-2. **Ubuntu 24 优化**：针对 Ubuntu 24.04 LTS 优化
-3. **网络连接**：软件安装需要稳定的网络连接
-
-## 📄 许可
-
-MIT License
-
----
-
-**快速开始**：`sudo ./main.sh` 🚀
+项目当前声明使用 MIT License。
