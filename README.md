@@ -75,9 +75,11 @@ Agent 默认不启用邮件和定时运行。监控阈值位于 `/etc/server-cat
 systemd_services = ["nginx", "docker"]
 http_urls = ["https://example.com/health"]
 http_timeout_seconds = 10
+docker_containers = ["redis", "grafana"]
+check_reboot_required = true
 ```
 
-服务未处于 `active`、HTTP 非成功响应、超时或连接失败会产生严重告警。
+服务未处于 `active`、HTTP 非成功响应、超时或连接失败、Docker 容器未运行均会产生严重告警。重启需求为警告级。
 
 `server-cat` 仍保留为兼容命令，新脚本和日常操作统一使用 `scat`。
 

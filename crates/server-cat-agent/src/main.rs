@@ -61,6 +61,10 @@ struct CheckConfig {
     http_urls: Vec<String>,
     #[serde(default = "default_http_timeout_seconds")]
     http_timeout_seconds: u64,
+    #[serde(default)]
+    docker_containers: Vec<String>,
+    #[serde(default)]
+    check_reboot_required: bool,
 }
 
 impl Default for CheckConfig {
@@ -69,6 +73,8 @@ impl Default for CheckConfig {
             systemd_services: Vec::new(),
             http_urls: Vec::new(),
             http_timeout_seconds: default_http_timeout_seconds(),
+            docker_containers: Vec::new(),
+            check_reboot_required: false,
         }
     }
 }
@@ -301,6 +307,15 @@ fn validate_config(config: &Config) -> Result<(), String> {
         }
     }
 
+    validate_unique_values(&config.checks.docker_containers, "checks.docker_containers")?;
+    for container in &config.checks.docker_containers {
+        if !is_valid_docker_container_name(container) {
+            return Err(format!(
+                "checks.docker_containers 包含无效容器名: {container}"
+            ));
+        }
+    }
+
     Ok(())
 }
 
@@ -326,6 +341,13 @@ fn is_valid_http_url(url: &str) -> bool {
     (url.starts_with("https://") || url.starts_with("http://"))
         && !url.contains('@')
         && !url.chars().any(char::is_whitespace)
+}
+
+fn is_valid_docker_container_name(name: &str) -> bool {
+    let mut characters = name.chars();
+    matches!(characters.next(), Some(character) if character.is_ascii_alphanumeric())
+        && characters
+            .all(|character| character.is_ascii_alphanumeric() || "_.-".contains(character))
 }
 
 fn validate_percent_pair(name: &str, warning: u8, critical: u8) -> Result<(), String> {
@@ -531,7 +553,91 @@ fn collect_alerts(config: &Config) -> Result<Vec<DetectedAlert>, String> {
         }
     }
 
+    alerts.extend(collect_docker_container_alerts(
+        &config.checks.docker_containers,
+    ));
+
+    if config.checks.check_reboot_required && Path::new("/var/run/reboot-required").exists() {
+        alerts.push(DetectedAlert {
+            key: "system:reboot-required".to_owned(),
+            level: AlertLevel::Warning,
+            label: "系统重启".to_owned(),
+            message: "系统标记为需要重启".to_owned(),
+        });
+    }
+
     Ok(alerts)
+}
+
+fn collect_docker_container_alerts(containers: &[String]) -> Vec<DetectedAlert> {
+    if containers.is_empty() {
+        return Vec::new();
+    }
+
+    if let Err(reason) = ensure_docker_available() {
+        return vec![DetectedAlert {
+            key: "docker:runtime".to_owned(),
+            level: AlertLevel::Critical,
+            label: "Docker 运行环境".to_owned(),
+            message: format!("无法检查 Docker 容器: {reason}"),
+        }];
+    }
+
+    let mut alerts = Vec::new();
+    for container in containers {
+        match docker_container_is_running(container) {
+            Ok(true) => {}
+            Ok(false) => alerts.push(DetectedAlert {
+                key: format!("docker:{container}"),
+                level: AlertLevel::Critical,
+                label: format!("Docker 容器 {container}"),
+                message: format!("Docker 容器 {container} 未处于运行状态"),
+            }),
+            Err(reason) => alerts.push(DetectedAlert {
+                key: format!("docker:{container}"),
+                level: AlertLevel::Critical,
+                label: format!("Docker 容器 {container}"),
+                message: format!("无法检查 Docker 容器 {container}: {reason}"),
+            }),
+        }
+    }
+
+    alerts
+}
+
+fn ensure_docker_available() -> Result<(), String> {
+    let output = Command::new("docker")
+        .args(["version", "--format", "{{.Server.Version}}"])
+        .output()
+        .map_err(|error| format!("无法执行 docker: {error}"))?;
+
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(command_failure_reason(&output))
+    }
+}
+
+fn docker_container_is_running(container: &str) -> Result<bool, String> {
+    let output = Command::new("docker")
+        .args(["inspect", "--format", "{{.State.Running}}", container])
+        .output()
+        .map_err(|error| format!("无法执行 docker: {error}"))?;
+
+    if !output.status.success() {
+        return Err(command_failure_reason(&output));
+    }
+
+    Ok(String::from_utf8_lossy(&output.stdout).trim() == "true")
+}
+
+fn command_failure_reason(output: &std::process::Output) -> String {
+    let error_output = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+    if error_output.is_empty() {
+        format!("命令退出状态 {status}", status = output.status)
+    } else {
+        error_output
+    }
 }
 
 fn systemd_service_is_active(service: &str) -> Result<bool, String> {
@@ -973,12 +1079,14 @@ reminder_hours = 6
         assert!(config.checks.systemd_services.is_empty());
         assert!(config.checks.http_urls.is_empty());
         assert_eq!(config.checks.http_timeout_seconds, 10);
+        assert!(config.checks.docker_containers.is_empty());
+        assert!(!config.checks.check_reboot_required);
     }
 
     #[test]
     fn accepts_valid_service_and_http_checks() {
         let configuration = format!(
-            "{VALID_CONFIG}\n[checks]\nsystemd_services = [\"nginx\"]\nhttp_urls = [\"https://example.com/health\"]\nhttp_timeout_seconds = 10\n"
+            "{VALID_CONFIG}\n[checks]\nsystemd_services = [\"nginx\"]\nhttp_urls = [\"https://example.com/health\"]\nhttp_timeout_seconds = 10\ndocker_containers = [\"redis\"]\ncheck_reboot_required = true\n"
         );
         let config: Config = toml::from_str(&configuration).expect("configuration parses");
         assert!(validate_config(&config).is_ok());
@@ -995,8 +1103,16 @@ reminder_hours = 6
         let duplicate_service = format!(
             "{VALID_CONFIG}\n[checks]\nsystemd_services = [\"nginx\", \"nginx\"]\nhttp_urls = []\nhttp_timeout_seconds = 10\n"
         );
+        let invalid_container = format!(
+            "{VALID_CONFIG}\n[checks]\nsystemd_services = []\nhttp_urls = []\nhttp_timeout_seconds = 10\ndocker_containers = [\"redis;rm\"]\n"
+        );
 
-        for configuration in [invalid_service, invalid_url, duplicate_service] {
+        for configuration in [
+            invalid_service,
+            invalid_url,
+            duplicate_service,
+            invalid_container,
+        ] {
             let config: Config = toml::from_str(&configuration).expect("configuration parses");
             assert!(validate_config(&config).is_err());
         }

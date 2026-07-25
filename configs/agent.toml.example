@@ -24,3 +24,5 @@ reminder_hours = 6
 systemd_services = []
 http_urls = []
 http_timeout_seconds = 10
+docker_containers = []
+check_reboot_required = false
