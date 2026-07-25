@@ -165,4 +165,4 @@ Docker、Nginx 和系统配置等已有回滚功能位于“单项恢复或卸�
 
 ## 许可
 
-项目当前声明使用 MIT License。
+本项目使用 [MIT License](LICENSE)。

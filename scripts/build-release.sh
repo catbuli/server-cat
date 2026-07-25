@@ -48,7 +48,7 @@ trap cleanup EXIT
 
 mkdir -p "$PACKAGE_ROOT/completions" "$PACKAGE_ROOT/systemd" "$OUTPUT_DIR"
 
-for path in main.sh lib configs templates modules softwares scripts; do
+for path in main.sh lib configs templates modules softwares scripts README.md LICENSE; do
     cp -a "$PROJECT_ROOT/$path" "$PACKAGE_ROOT/$path"
 done
 
