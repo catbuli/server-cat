@@ -31,7 +31,6 @@ struct AgentConfig {
 #[derive(Debug, Deserialize)]
 struct ScheduleConfig {
     interval_seconds: u64,
-    update_check_interval_hours: u64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -42,8 +41,6 @@ struct ThresholdConfig {
     inode_critical_percent: u8,
     memory_warning_percent: u8,
     load_warning_per_cpu: f64,
-    certificate_warning_days: u64,
-    backup_max_age_hours: u64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -213,7 +210,7 @@ fn validate_config(config: &Config) -> Result<(), String> {
         return Err("agent.state_dir 必须是绝对路径".to_owned());
     }
 
-    if config.schedule.interval_seconds == 0 || config.schedule.update_check_interval_hours == 0 {
+    if config.schedule.interval_seconds == 0 {
         return Err("调度间隔必须大于 0".to_owned());
     }
 
@@ -238,12 +235,6 @@ fn validate_config(config: &Config) -> Result<(), String> {
         || config.thresholds.load_warning_per_cpu <= 0.0
     {
         return Err("load_warning_per_cpu 必须大于 0".to_owned());
-    }
-
-    if config.thresholds.certificate_warning_days == 0
-        || config.thresholds.backup_max_age_hours == 0
-    {
-        return Err("证书和备份阈值必须大于 0".to_owned());
     }
 
     if config.email.reminder_hours == 0 {
@@ -811,7 +802,6 @@ state_dir = "/var/lib/server-cat"
 
 [schedule]
 interval_seconds = 60
-update_check_interval_hours = 6
 
 [thresholds]
 disk_warning_percent = 80
@@ -820,8 +810,6 @@ inode_warning_percent = 80
 inode_critical_percent = 90
 memory_warning_percent = 85
 load_warning_per_cpu = 2.0
-certificate_warning_days = 14
-backup_max_age_hours = 26
 
 [email]
 enabled = true
