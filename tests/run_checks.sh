@@ -209,11 +209,43 @@ check_config_source_behavior() {
         SCRIPT_DIR="$source_dir"
         source "$1/configs/check_update.sh"
         source "$1/configs/doctor.sh"
+        source "$1/configs/cleanup.sh"
         [[ "$SCRIPT_DIR" == "$source_dir" ]]
     ' _ "$PROJECT_ROOT"; then
         pass "配置菜单加载不会覆盖主入口目录"
     else
         fail "配置菜单加载不会覆盖主入口目录"
+    fi
+}
+
+check_cleanup_behavior() {
+    if bash -c '
+        source "$1/lib/utils.sh"
+        source "$1/lib/cleanup.sh"
+        call_log="$(mktemp)"
+        export SERVER_CAT_CLEANUP_CALL_LOG="$call_log"
+        systemd-tmpfiles() { printf "%s\\n" "$*" >> "$SERVER_CAT_CLEANUP_CALL_LOG"; }
+        confirm() { return 0; }
+        server_cat_cleanup_temp > /dev/null &&
+            grep -Fx -- "--clean --dry-run" "$call_log" > /dev/null &&
+            grep -Fx -- "--clean" "$call_log" > /dev/null
+    ' _ "$PROJECT_ROOT"; then
+        pass "临时文件清理先检查再按系统规则执行"
+    else
+        fail "临时文件清理先检查再按系统规则执行"
+    fi
+
+    if bash -c '
+        source "$1/lib/utils.sh"
+        source "$1/lib/cleanup.sh"
+        docker() { printf "%s\\n" "$*"; }
+        confirm_strong() { [[ "$1" == "CLEAN" ]]; }
+        output="$(server_cat_cleanup_docker_dangling_images)"
+        [[ "$output" == *"image prune --force"* && "$output" != *"volume prune"* && "$output" != *"system prune"* ]]
+    ' _ "$PROJECT_ROOT"; then
+        pass "Docker 镜像清理不涉及卷或全量清理"
+    else
+        fail "Docker 镜像清理不涉及卷或全量清理"
     fi
 }
 
@@ -256,6 +288,7 @@ check_release_behavior
 check_update_menu_behavior
 check_doctor_behavior
 check_config_source_behavior
+check_cleanup_behavior
 check_completion_behavior
 check_platform_behavior
 
@@ -265,7 +298,11 @@ assert_contains_literal "configs/check_update.sh" 'server_cat_update_check' "菜
 assert_contains_literal "configs/check_update.sh" 'server_cat_update_apply' "菜单更新可安装已验证版本"
 assert_contains_literal "configs/check_update.sh" 'confirm "已完成更新验证，是否立即安装"' "菜单更新安装前要求确认"
 assert_contains_literal "configs/doctor.sh" 'server_cat_doctor' "菜单提供运行环境检查"
+assert_contains_literal "configs/cleanup.sh" 'server_cat_cleanup_menu' "菜单提供空间清理"
 assert_contains_literal "main.sh" 'scat doctor' "命令行提供运行环境检查"
+assert_contains_literal "lib/cleanup.sh" 'systemd-tmpfiles --clean' "临时文件清理使用系统规则"
+assert_not_contains "lib/cleanup.sh" 'docker volume prune' "空间清理不删除 Docker 卷"
+assert_not_contains "lib/cleanup.sh" 'docker system prune' "空间清理不执行 Docker 全量清理"
 assert_contains_literal "main.sh" 'dispatch_command "$@"' "主入口在菜单前分发子命令"
 assert_contains_literal "main.sh" 'server_cat_agent_dispatch "${@:2}"' "主入口委托 Agent 子命令分发"
 assert_contains_literal "packaging/install.sh" 'for command_name in scat server-cat' "首次安装提供 scat 与兼容命令"
