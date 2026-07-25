@@ -65,6 +65,7 @@ check_syntax() {
 check_menu_metadata() {
     local script
     local function_name
+    local priority
 
     for script in "$PROJECT_ROOT"/modules/*.sh "$PROJECT_ROOT"/softwares/*.sh "$PROJECT_ROOT"/configs/*.sh; do
         function_name=$(awk -F'"' '/^MENU_FUNC=/{print $2; exit}' "$script")
@@ -75,6 +76,13 @@ check_menu_metadata() {
             pass "$(basename "$script") 的 MENU_FUNC 可调用"
         else
             fail "$(basename "$script") 的 MENU_FUNC 可调用"
+        fi
+
+        priority=$(bash -c 'source "$1/lib/utils.sh"; get_priority "$2"' _ "$PROJECT_ROOT" "$script")
+        if [[ "$priority" =~ ^[0-9]+$ ]]; then
+            pass "$(basename "$script") 的 PRIORITY 可解析"
+        else
+            fail "$(basename "$script") 的 PRIORITY 可解析"
         fi
     done
 }
@@ -103,6 +111,16 @@ check_utils_behavior() {
     else
         fail "菜单函数通过公共调用器执行"
     fi
+
+    local clear_error
+    clear_error=$(mktemp)
+    if TERM=xterm-ghostty bash -c 'source "$1"; clear_screen' _ "$PROJECT_ROOT/lib/utils.sh" \
+        > /dev/null 2> "$clear_error" && [[ ! -s "$clear_error" ]]; then
+        pass "未知终端类型可静默降级清屏"
+    else
+        fail "未知终端类型可静默降级清屏"
+    fi
+    rm -f "$clear_error"
 }
 
 check_agent_command_behavior() {
@@ -430,6 +448,7 @@ assert_contains "modules/ssh_config.sh" 'restart_ssh_service' "SSH 配置复用�
 assert_contains "backups/restore_backup.sh" 'restart_ssh_service' "SSH 恢复复用服务重启回退"
 assert_contains_literal "main.sh" 'is_number "$choice"' "菜单在数值比较前校验输入"
 assert_contains_literal "main.sh" 'call_menu_func "$func"' "菜单通过安全调用器执行功能"
+assert_contains_literal "lib/utils.sh" 'clear_screen' "菜单使用兼容未知终端的清屏函数"
 assert_contains "backups/restore_backup.sh" 'get_real_home' "恢复用户数据使用实际用户主目录"
 assert_contains_literal "backups/restore_backup.sh" 'fail_count=$((fail_count + 1))' "全部恢复会汇总子项失败"
 assert_contains "modules/init_user_dirs.sh" 'get_real_home' "用户目录初始化使用实际用户主目录"

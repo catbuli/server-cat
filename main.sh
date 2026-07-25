@@ -231,7 +231,7 @@ function show_generic_menu() {
     local item_names=("${menu_names[@]}")
 
     while true; do
-        clear
+        clear_screen
         echo -e "${BLUE}=====================================${NC}"
         echo -e "${BLUE}    $icon $title                   ${NC}"
         echo -e "${BLUE}=====================================${NC}"
@@ -336,7 +336,7 @@ function show_configs_menu() {
     fi
 
     while true; do
-        clear
+        clear_screen
         echo -e "${BLUE}=====================================${NC}"
         echo -e "${BLUE}    ⚙️  系统设置                 ${NC}"
         echo -e "${BLUE}=====================================${NC}"
@@ -359,7 +359,7 @@ function show_configs_menu() {
         elif [[ "$choice" -ge 1 && "$choice" -le ${#item_names[@]} ]]; then
             local idx=$((choice - 1))
             local func="${item_funcs[$idx]}"
-            clear
+            clear_screen
             if ! call_menu_func "$func"; then
                 print_error "功能执行失败"
             fi
@@ -378,7 +378,7 @@ function show_backup_menu() {
 }
 
 function show_rollback_menu() {
-    clear
+    clear_screen
     echo -e "${RED}=====================================${NC}"
     echo -e "${RED}    ⚠️  卸载                      ${NC}"
     echo -e "${RED}=====================================${NC}"

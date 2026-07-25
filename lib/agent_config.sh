@@ -492,7 +492,7 @@ server_cat_agent_config_menu() {
     fi
 
     while true; do
-        clear
+        clear_screen
         echo -e "${BLUE}=====================================${NC}"
         echo -e "${BLUE}    🐈 配置监控 Agent              ${NC}"
         echo -e "${BLUE}=====================================${NC}"

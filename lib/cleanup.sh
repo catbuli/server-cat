@@ -109,7 +109,7 @@ server_cat_cleanup_docker_build_cache() {
 
 server_cat_cleanup_menu() {
     while true; do
-        clear
+        clear_screen
         echo -e "${BLUE}=====================================${NC}"
         echo -e "${BLUE}    🧹 清理系统空间                 ${NC}"
         echo -e "${BLUE}=====================================${NC}"

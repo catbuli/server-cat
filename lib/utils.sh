@@ -13,6 +13,14 @@ print_error() { echo -e "${RED}$1${NC}"; }
 print_step() { echo -e "\n${YELLOW}$1${NC}"; }
 print_prompt() { echo -e "${CYAN}$1${NC}"; }
 
+clear_screen() {
+    if command clear 2>/dev/null; then
+        return 0
+    fi
+
+    printf '\033[2J\033[H'
+}
+
 check_command() {
     local cmd="$1"
     local name="${2:-$1}"
@@ -27,8 +35,28 @@ get_script_var() {
     local script="$1"
     local var_name="$2"
     local default_val="${3:-}"
-    local val=$(grep "^${var_name}=" "$script" 2>/dev/null | head -1 | cut -d'"' -f2)
-    echo "${val:-$default_val}"
+    local val
+
+    val=$(sed -n "s/^${var_name}=//p" "$script" 2>/dev/null | head -n 1)
+    val="${val#"${val%%[![:space:]]*}"}"
+    val="${val%"${val##*[![:space:]]}"}"
+
+    case "$val" in
+        \"*\")
+            val="${val#\"}"
+            val="${val%\"}"
+            ;;
+        \'*\')
+            val="${val#\'}"
+            val="${val%\'}"
+            ;;
+        *)
+            val="${val%%#*}"
+            val="${val%"${val##*[![:space:]]}"}"
+            ;;
+    esac
+
+    printf '%s\n' "${val:-$default_val}"
 }
 
 is_number() {
@@ -142,7 +170,7 @@ show_menu() {
     local zero_text="${3:-返回}"
     shift 3
 
-    clear >&2
+    clear_screen >&2
     echo -e "${color}=====================================${NC}" >&2
     echo -e "${color}    $title${NC}" >&2
     echo -e "${color}=====================================${NC}" >&2

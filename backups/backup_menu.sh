@@ -13,7 +13,7 @@ function backup_menu() {
     init_backup_dirs
 
     while true; do
-        clear
+        clear_screen
         echo -e "${BLUE}=====================================${NC}"
         echo -e "${BLUE}    💾 备份与恢复                 ${NC}"
         echo -e "${BLUE}=====================================${NC}"
@@ -34,12 +34,12 @@ function backup_menu() {
                 press_enter_to_continue
                 ;;
             2)
-                clear
+                clear_screen
                 list_backups
                 press_enter_to_continue
                 ;;
             3)
-                clear
+                clear_screen
                 list_backups
                 echo ""
                 read -p "请输入备份文件名: " backup_name
