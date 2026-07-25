@@ -128,6 +128,15 @@ struct AgentState {
     alerts: BTreeMap<String, ActiveAlert>,
     #[serde(default)]
     last_scheduled_check_unix: Option<u64>,
+    #[serde(default)]
+    email_mute_until_unix: Option<u64>,
+}
+
+impl AgentState {
+    fn email_notifications_muted(&self, now: u64) -> bool {
+        self.email_mute_until_unix
+            .is_some_and(|mute_until| mute_until > now)
+    }
 }
 
 struct TimerStatus {
@@ -205,6 +214,18 @@ fn run(arguments: Vec<String>) -> Result<(), String> {
             validate_config(&config)?;
             send_test_email(&config)
         }
+        "mute" => {
+            let (duration_seconds, config_path) = parse_mute_arguments(&arguments[1..])?;
+            let config = load_config(&config_path)?;
+            validate_config(&config)?;
+            mute_email_notifications(&config, duration_seconds)
+        }
+        "unmute" => {
+            let config_path = parse_config_path(&arguments[1..])?;
+            let config = load_config(&config_path)?;
+            validate_config(&config)?;
+            unmute_email_notifications(&config)
+        }
         "version" | "--version" | "-V" => {
             println!("server-cat-agent {}", env!("CARGO_PKG_VERSION"));
             Ok(())
@@ -218,7 +239,7 @@ fn run(arguments: Vec<String>) -> Result<(), String> {
 }
 
 fn usage() -> &'static str {
-    "用法:\n  server-cat-agent validate-config [--config 路径]\n  server-cat-agent validate-smtp [--config 路径]\n  server-cat-agent check [--config 路径]\n  server-cat-agent check --scheduled [--config 路径]\n  server-cat-agent status [--config 路径]\n  server-cat-agent test-email [--config 路径]\n  server-cat-agent version"
+    "用法:\n  server-cat-agent validate-config [--config 路径]\n  server-cat-agent validate-smtp [--config 路径]\n  server-cat-agent check [--config 路径]\n  server-cat-agent check --scheduled [--config 路径]\n  server-cat-agent status [--config 路径]\n  server-cat-agent test-email [--config 路径]\n  server-cat-agent mute <时长> [--config 路径]\n  server-cat-agent unmute [--config 路径]\n  server-cat-agent version"
 }
 
 fn parse_config_path(arguments: &[String]) -> Result<String, String> {
@@ -249,6 +270,42 @@ fn parse_check_arguments(arguments: &[String]) -> Result<(String, bool), String>
     }
 
     Ok((config_path, scheduled))
+}
+
+fn parse_mute_arguments(arguments: &[String]) -> Result<(u64, String), String> {
+    let Some((duration, remaining)) = arguments.split_first() else {
+        return Err("静默时长不能为空，用法: mute <时长>，例如 30m、2h、1d".to_owned());
+    };
+
+    let duration_seconds = parse_mute_duration(duration)?;
+    let config_path = parse_config_path(remaining)?;
+    Ok((duration_seconds, config_path))
+}
+
+fn parse_mute_duration(input: &str) -> Result<u64, String> {
+    let Some(unit) = input.chars().last() else {
+        return Err("静默时长无效，请使用 30m、2h 或 1d".to_owned());
+    };
+    let multiplier = match unit {
+        'm' => 60,
+        'h' => 60 * 60,
+        'd' => 24 * 60 * 60,
+        _ => return Err("静默时长无效，请使用 30m、2h 或 1d".to_owned()),
+    };
+    let number = input[..input.len() - unit.len_utf8()]
+        .parse::<u64>()
+        .map_err(|_| "静默时长无效，请使用 30m、2h 或 1d".to_owned())?;
+    if number == 0 {
+        return Err("静默时长必须大于 0".to_owned());
+    }
+    let duration_seconds = number
+        .checked_mul(multiplier)
+        .ok_or_else(|| "静默时长过大".to_owned())?;
+    if duration_seconds > 30 * 24 * 60 * 60 {
+        return Err("单次静默最长 30 天".to_owned());
+    }
+
+    Ok(duration_seconds)
 }
 
 fn load_config(config_path: &str) -> Result<Config, String> {
@@ -400,8 +457,10 @@ fn run_check(config: &Config, scheduled: bool) -> Result<(), String> {
     }
 
     let alerts = collect_alerts(config)?;
-    let check_result = format_check_result(&alerts, config.email.enabled);
-    let smtp = if config.email.enabled {
+    let notifications_muted = state.email_notifications_muted(now);
+    let notification_status = notification_status(config.email.enabled, &state, now);
+    let check_result = format_check_result(&alerts, &notification_status);
+    let smtp = if config.email.enabled && !notifications_muted {
         Some(load_smtp_settings()?)
     } else {
         None
@@ -479,11 +538,46 @@ fn show_status(config: &Config) -> Result<(), String> {
     let state = load_state(&state_path)?;
     let timer = read_timer_status();
     let last_scheduled_check = format_scheduled_check(state.last_scheduled_check_unix);
+    let notification_status = notification_status(config.email.enabled, &state, unix_timestamp()?);
 
     println!(
         "{}",
-        format_agent_status(config, &state, &timer, &last_scheduled_check)
+        format_agent_status(
+            config,
+            &state,
+            &timer,
+            &last_scheduled_check,
+            &notification_status,
+        )
     );
+    Ok(())
+}
+
+fn mute_email_notifications(config: &Config, duration_seconds: u64) -> Result<(), String> {
+    let now = unix_timestamp()?;
+    let mute_until = now
+        .checked_add(duration_seconds)
+        .ok_or_else(|| "静默截止时间超出范围".to_owned())?;
+    let state_path = Path::new(&config.agent.state_dir).join("alerts.json");
+    let mut state = load_state(&state_path)?;
+    state.email_mute_until_unix = Some(mute_until);
+    save_state(&state_path, &state)?;
+
+    println!("邮件通知已静默至: {}", format_unix_timestamp(mute_until));
+    Ok(())
+}
+
+fn unmute_email_notifications(config: &Config) -> Result<(), String> {
+    let state_path = Path::new(&config.agent.state_dir).join("alerts.json");
+    let mut state = load_state(&state_path)?;
+    if state.email_mute_until_unix.is_none() {
+        println!("邮件通知当前未处于静默状态");
+        return Ok(());
+    }
+
+    state.email_mute_until_unix = None;
+    save_state(&state_path, &state)?;
+    println!("已恢复邮件通知");
     Ok(())
 }
 
@@ -538,6 +632,11 @@ fn format_scheduled_check(timestamp: Option<u64>) -> String {
     let Some(timestamp) = timestamp else {
         return "尚未执行".to_owned();
     };
+
+    format_unix_timestamp(timestamp)
+}
+
+fn format_unix_timestamp(timestamp: u64) -> String {
     let date_argument = format!("@{timestamp}");
 
     Command::new("date")
@@ -556,6 +655,7 @@ fn format_agent_status(
     state: &AgentState,
     timer: &TimerStatus,
     last_scheduled_check: &str,
+    notification_status: &str,
 ) -> String {
     let mut lines = vec![
         "Server Cat Agent 状态".to_owned(),
@@ -564,14 +664,7 @@ fn format_agent_status(
         format!("下次定时触发: {}", timer.next_trigger),
         format!("实际巡检间隔: {} 秒", config.schedule.interval_seconds),
         format!("上次实际巡检: {last_scheduled_check}"),
-        format!(
-            "邮件通知: {}",
-            if config.email.enabled {
-                "已启用"
-            } else {
-                "未启用"
-            }
-        ),
+        format!("邮件通知: {notification_status}"),
         "巡检目标:".to_owned(),
         format!(
             "- systemd 服务: {}",
@@ -615,16 +708,24 @@ fn format_target_list(targets: &[String]) -> String {
     }
 }
 
-fn format_check_result(alerts: &[DetectedAlert], email_enabled: bool) -> String {
-    if alerts.is_empty() {
-        return "监控检查完成: 未发现超过阈值的指标".to_owned();
+fn notification_status(email_enabled: bool, state: &AgentState, now: u64) -> String {
+    if !email_enabled {
+        return "未启用".to_owned();
+    }
+    if let Some(mute_until) = state
+        .email_mute_until_unix
+        .filter(|mute_until| *mute_until > now)
+    {
+        return format!("已静默至 {}", format_unix_timestamp(mute_until));
     }
 
-    let notification_status = if email_enabled {
-        "邮件通知已启用"
-    } else {
-        "邮件通知未启用"
-    };
+    "已启用".to_owned()
+}
+
+fn format_check_result(alerts: &[DetectedAlert], notification_status: &str) -> String {
+    if alerts.is_empty() {
+        return format!("监控检查完成: 未发现超过阈值的指标，邮件通知{notification_status}");
+    }
     let details = alerts
         .iter()
         .map(|alert| format!("- [{}] {}", alert.level.label(), alert.message))
@@ -632,7 +733,7 @@ fn format_check_result(alerts: &[DetectedAlert], email_enabled: bool) -> String 
         .join("\n");
 
     format!(
-        "监控检查完成: {} 项指标处于告警状态，{notification_status}\n\n告警详情:\n{details}",
+        "监控检查完成: {} 项指标处于告警状态，邮件通知{notification_status}\n\n告警详情:\n{details}",
         alerts.len()
     )
 }
@@ -1405,7 +1506,7 @@ reminder_hours = 6
         }];
 
         assert_eq!(
-            format_check_result(&alerts, false),
+            format_check_result(&alerts, "未启用"),
             "监控检查完成: 1 项指标处于告警状态，邮件通知未启用\n\n告警详情:\n- [严重] 磁盘 / 的磁盘使用率为 91%，警告阈值 80%，严重阈值 90%"
         );
     }
@@ -1434,9 +1535,49 @@ reminder_hours = 6
         };
 
         assert_eq!(
-            format_agent_status(&config, &state, &timer, "Fri 2026-07-25 10:00:00 CST"),
+            format_agent_status(
+                &config,
+                &state,
+                &timer,
+                "Fri 2026-07-25 10:00:00 CST",
+                "已启用",
+            ),
             "Server Cat Agent 状态\n定时器: enabled (active)\n上次定时触发: Fri 2026-07-25 10:00:00 CST\n下次定时触发: Fri 2026-07-25 10:01:00 CST\n实际巡检间隔: 60 秒\n上次实际巡检: Fri 2026-07-25 10:00:00 CST\n邮件通知: 已启用\n巡检目标:\n- systemd 服务: nginx\n- HTTP 地址: https://example.com/health\n- Docker 容器: redis\n- 重启需求: 检查\n当前告警: 1 项\n- [严重] Docker 容器 redis 未处于运行状态"
         );
+    }
+
+    #[test]
+    fn parses_supported_mute_durations() {
+        assert_eq!(parse_mute_duration("30m"), Ok(30 * 60));
+        assert_eq!(parse_mute_duration("2h"), Ok(2 * 60 * 60));
+        assert_eq!(parse_mute_duration("1d"), Ok(24 * 60 * 60));
+        assert!(parse_mute_duration("0m").is_err());
+        assert!(parse_mute_duration("31d").is_err());
+        assert!(parse_mute_duration("90s").is_err());
+    }
+
+    #[test]
+    fn parses_mute_with_custom_config() {
+        let arguments = vec![
+            "30m".to_owned(),
+            "--config".to_owned(),
+            "/tmp/server-cat.toml".to_owned(),
+        ];
+
+        assert_eq!(
+            parse_mute_arguments(&arguments),
+            Ok((30 * 60, "/tmp/server-cat.toml".to_owned()))
+        );
+    }
+
+    #[test]
+    fn mute_state_expires_without_writing_state() {
+        let mut state = AgentState::default();
+        state.email_mute_until_unix = Some(200);
+
+        assert!(state.email_notifications_muted(199));
+        assert!(!state.email_notifications_muted(200));
+        assert_eq!(notification_status(true, &state, 200), "已启用");
     }
 
     #[test]

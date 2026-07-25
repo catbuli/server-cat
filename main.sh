@@ -25,6 +25,8 @@ function show_command_help() {
   sudo scat agent disable         停止并禁用每分钟监控
   sudo scat agent status          查看监控汇总状态
   sudo scat agent test-email      发送 SMTP 测试邮件
+  sudo scat agent mute 30m        静默邮件通知 30 分钟
+  sudo scat agent unmute          立即恢复邮件通知
 EOF
 }
 
@@ -111,6 +113,20 @@ function dispatch_command() {
                         return 1
                     }
                     /opt/server-cat/current/server-cat-agent test-email
+                    ;;
+                mute)
+                    [[ $# -eq 3 ]] || {
+                        print_error "用法: scat agent mute <时长>，例如 30m、2h、1d"
+                        return 1
+                    }
+                    /opt/server-cat/current/server-cat-agent mute "$3"
+                    ;;
+                unmute)
+                    [[ $# -eq 2 ]] || {
+                        print_error "用法: scat agent unmute"
+                        return 1
+                    }
+                    /opt/server-cat/current/server-cat-agent unmute
                     ;;
                 *)
                     print_error "未知 Agent 命令: ${subcommand:-未提供}"

@@ -27,7 +27,7 @@ _scat_completion() {
             ;;
         agent)
             if [[ "$COMP_CWORD" -eq 2 ]]; then
-                COMPREPLY=( $(compgen -W 'check enable disable status test-email' -- "$current_word") )
+                COMPREPLY=( $(compgen -W 'check enable disable status test-email mute unmute' -- "$current_word") )
             fi
             ;;
     esac
