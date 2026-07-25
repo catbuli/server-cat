@@ -24,6 +24,7 @@ function show_command_help() {
   sudo scat agent enable          启用每分钟监控
   sudo scat agent disable         停止并禁用每分钟监控
   sudo scat agent status          查看监控汇总状态
+  sudo scat agent test-email      发送 SMTP 测试邮件
 EOF
 }
 
@@ -103,6 +104,13 @@ function dispatch_command() {
                         return 1
                     }
                     /opt/server-cat/current/server-cat-agent status
+                    ;;
+                test-email)
+                    [[ $# -eq 2 ]] || {
+                        print_error "用法: scat agent test-email"
+                        return 1
+                    }
+                    /opt/server-cat/current/server-cat-agent test-email
                     ;;
                 *)
                     print_error "未知 Agent 命令: ${subcommand:-未提供}"

@@ -193,6 +193,12 @@ fn run(arguments: Vec<String>) -> Result<(), String> {
             validate_config(&config)?;
             show_status(&config)
         }
+        "test-email" => {
+            let config_path = parse_config_path(&arguments[1..])?;
+            let config = load_config(&config_path)?;
+            validate_config(&config)?;
+            send_test_email(&config)
+        }
         "version" | "--version" | "-V" => {
             println!("server-cat-agent {}", env!("CARGO_PKG_VERSION"));
             Ok(())
@@ -206,7 +212,7 @@ fn run(arguments: Vec<String>) -> Result<(), String> {
 }
 
 fn usage() -> &'static str {
-    "用法:\n  server-cat-agent validate-config [--config 路径]\n  server-cat-agent validate-smtp [--config 路径]\n  server-cat-agent check [--config 路径]\n  server-cat-agent check --scheduled [--config 路径]\n  server-cat-agent status [--config 路径]\n  server-cat-agent version"
+    "用法:\n  server-cat-agent validate-config [--config 路径]\n  server-cat-agent validate-smtp [--config 路径]\n  server-cat-agent check [--config 路径]\n  server-cat-agent check --scheduled [--config 路径]\n  server-cat-agent status [--config 路径]\n  server-cat-agent test-email [--config 路径]\n  server-cat-agent version"
 }
 
 fn parse_config_path(arguments: &[String]) -> Result<String, String> {
@@ -464,6 +470,26 @@ fn show_status(config: &Config) -> Result<(), String> {
     let timer = read_timer_status();
 
     println!("{}", format_agent_status(config, &state, &timer));
+    Ok(())
+}
+
+fn send_test_email(config: &Config) -> Result<(), String> {
+    if !config.email.enabled {
+        return Err("邮件通知未启用，请先在 agent.toml 设置 email.enabled = true".to_owned());
+    }
+
+    let settings = load_smtp_settings()?;
+    let hostname = read_hostname();
+    let now = unix_timestamp()?;
+    send_email(
+        &settings,
+        config,
+        &format!("Server Cat 测试邮件: {hostname}"),
+        &format!(
+            "主机: {hostname}\n时间: {now}\n\n这是一封 Server Cat 测试邮件。收到此邮件表示 SMTP 配置可用于发送监控告警。\n"
+        ),
+    )?;
+    println!("测试邮件已发送至: {}", config.email.recipients.join(", "));
     Ok(())
 }
 
@@ -1310,6 +1336,17 @@ reminder_hours = 6
         assert_eq!(
             format_agent_status(&config, &state, &timer),
             "Server Cat Agent 状态\n定时器: enabled (active)\n上次定时触发: Fri 2026-07-25 10:00:00 CST\n下次定时触发: Fri 2026-07-25 10:01:00 CST\n邮件通知: 已启用\n巡检目标:\n- systemd 服务: nginx\n- HTTP 地址: https://example.com/health\n- Docker 容器: redis\n- 重启需求: 检查\n当前告警: 1 项\n- [严重] Docker 容器 redis 未处于运行状态"
+        );
+    }
+
+    #[test]
+    fn test_email_requires_enabled_notifications() {
+        let configuration = VALID_CONFIG.replace("enabled = true", "enabled = false");
+        let config: Config = toml::from_str(&configuration).expect("configuration parses");
+
+        assert_eq!(
+            send_test_email(&config),
+            Err("邮件通知未启用，请先在 agent.toml 设置 email.enabled = true".to_owned())
         );
     }
 
