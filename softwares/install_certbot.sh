@@ -7,7 +7,6 @@ PRIORITY=30
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &> /dev/null && pwd)"
 source "$SCRIPT_DIR/../lib/utils.sh"
-source "$SCRIPT_DIR/../modules/certbot_renew.sh"
 
 function install_certbot() {
     echo "======================================"
@@ -65,19 +64,13 @@ function install_certbot() {
     certbot --version 2>/dev/null || echo "  • Certbot: 已安装"
 
     echo ""
-
-    if confirm "是否设置定时自动续期任务" "n"; then
-        echo ""
-        setup_certbot_renew || true
-    fi
-
-    echo ""
     print_info "📝 使用提示："
     echo "  • 为域名申请证书: sudo certbot --nginx -d yourdomain.com"
     echo "  • 为 Apache 申请: sudo certbot --apache -d yourdomain.com"
     echo "  • 仅获取证书: sudo certbot certonly --standalone -d yourdomain.com"
     echo "  • 查看已有证书: sudo certbot certificates"
     echo "  • 续期证书: sudo certbot renew"
+    echo "  • Snap 会通过系统任务自动尝试续期，无需额外配置定时任务"
     echo ""
 
     return 0
@@ -98,10 +91,6 @@ function rollback_certbot() {
         fi
 
         rm -f /usr/bin/certbot
-
-        if declare -f rollback_certbot_renew &> /dev/null; then
-            rollback_certbot_renew
-        fi
     else
         print_warning "已取消卸载"
     fi
