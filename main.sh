@@ -15,6 +15,7 @@ source "$SCRIPT_DIR/lib/release.sh"
 source "$SCRIPT_DIR/lib/doctor.sh"
 source "$SCRIPT_DIR/lib/agent.sh"
 source "$SCRIPT_DIR/lib/agent_config.sh"
+source "$SCRIPT_DIR/lib/uninstall.sh"
 
 function show_command_help() {
     cat <<'EOF'
@@ -358,72 +359,120 @@ function show_backup_menu() {
     backup_menu
 }
 
-function show_rollback_menu() {
+function show_server_cat_uninstall() {
     clear_screen
     echo -e "${RED}=====================================${NC}"
-    echo -e "${RED}    ⚠️  卸载                      ${NC}"
+    echo -e "${RED}    ⚠️  卸载 Server Cat           ${NC}"
     echo -e "${RED}=====================================${NC}"
-    print_warning "将会进行如下操作："
-    print_warning "• 卸载所有已安装的软件"
-    print_warning "• 恢复所有配置"
-    print_warning "• 删除所有创建的目录和文件"
+    print_warning "将停止 Agent 并删除以下 Server Cat 自身组件："
+    print_warning "• /opt/server-cat 程序目录"
+    print_warning "• scat 与 server-cat 命令"
+    print_warning "• Agent systemd 服务、定时器和 Bash 补全"
+    print_info "不会卸载 Docker、Nginx、Certbot 或安装依赖"
+    print_info "默认保留 /etc/server-cat 和 /var/lib/server-cat"
     echo ""
 
-    confirm_strong "CONFIRM" "确认继续" || {
+    confirm_strong "UNINSTALL" "确认卸载 Server Cat" || {
         print_warning "已取消卸载"
         press_enter_to_continue
         return 0
     }
 
-    echo ""
-    print_warning "⚠️  最后确认！此操作不可逆！"
+    local remove_data=0
+    if confirm "是否同时删除 Agent 配置、SMTP 密码和告警状态" "n"; then
+        print_warning "删除后无法通过重新安装恢复这些配置和状态"
+        if confirm_strong "DELETE" "确认删除 /etc/server-cat 和 /var/lib/server-cat"; then
+            remove_data=1
+        else
+            print_warning "未完成数据删除确认，将保留配置和状态"
+        fi
+    fi
 
-    confirm_strong "YES" "最后确认" || {
-        print_warning "已取消卸载"
+    if ! server_cat_uninstall_execute "$remove_data"; then
         press_enter_to_continue
-        return 0
-    }
+        return 1
+    fi
 
-    echo ""
-    print_step "开始执行卸载..."
+    print_info "卸载程序即将退出；如需重新使用，请重新运行官方安装命令"
+    exit 0
+}
 
+function show_component_rollback_menu() {
     declare -a rollback_items
     collect_funcs "get_rollback_func" rollback_items
+    local -a rollback_funcs rollback_names
+    local item
+    local func
+    local name
+    local choice
 
     if [ ${#rollback_items[@]} -eq 0 ]; then
-        print_warning "没有找到任何卸载函数"
+        print_warning "没有找到可用的单项恢复或卸载功能"
         press_enter_to_continue
         return 0
     fi
 
-    print_info "准备执行 ${#rollback_items[@]} 个卸载功能..."
-    echo ""
-
-    export ROLLBACK_BATCH_MODE=1
-    local success_count=0
-    local fail_count=0
-
-    for i in "${!rollback_items[@]}"; do
-        IFS='|' read -r func name <<< "${rollback_items[$i]}"
-        print_step "[$((i+1))/${#rollback_items[@]}] 恢复: $name"
-
-        if call_menu_func "$func"; then
-            print_success "✓ $name 卸载成功"
-            ((success_count++))
-        else
-            print_error "✗ $name 卸载失败"
-            ((fail_count++))
-        fi
-        echo ""
+    for item in "${rollback_items[@]}"; do
+        IFS='|' read -r func name <<< "$item"
+        rollback_funcs+=("$func")
+        rollback_names+=("$name")
     done
 
-    unset ROLLBACK_BATCH_MODE
+    while true; do
+        choice=$(select_menu \
+            "↩️  单项恢复或卸载" \
+            "$RED" \
+            "返回卸载与恢复" \
+            "仅执行选中的功能，不会批量修改其他软件或系统配置。" \
+            "${rollback_names[@]}")
 
-    print_success "卸载完成统计："
-    echo "  • 成功: $success_count"
-    echo "  • 失败: $fail_count"
+        if ! is_number "$choice"; then
+            print_error "无效输入，请重试"
+            sleep 2
+        elif [[ "$choice" -eq 0 ]]; then
+            break
+        elif [[ "$choice" -ge 1 && "$choice" -le ${#rollback_names[@]} ]]; then
+            local idx=$((choice - 1))
+            func="${rollback_funcs[$idx]}"
+            name="${rollback_names[$idx]}"
+            clear_screen
+            print_warning "即将只执行：$name"
+            print_warning "该操作可能卸载软件或恢复系统配置，请确认你了解其影响"
 
-    press_enter_to_continue
+            if ! confirm "确认继续" "n"; then
+                print_warning "已取消操作"
+            elif call_menu_func "$func"; then
+                print_success "✓ $name 执行成功"
+            else
+                print_error "✗ $name 执行失败"
+            fi
+            press_enter_to_continue
+        else
+            print_error "无效输入，请重试"
+            sleep 2
+        fi
+    done
+}
+
+function show_uninstall_menu() {
+    local choice
+
+    while true; do
+        choice=$(select_menu \
+            "⚠️  卸载与恢复" \
+            "$RED" \
+            "返回主菜单" \
+            "Server Cat 自卸载与系统组件恢复互相独立。" \
+            "卸载 Server Cat" \
+            "单项恢复或卸载")
+
+        case "$choice" in
+            1) show_server_cat_uninstall ;;
+            2) show_component_rollback_menu ;;
+            0) break ;;
+            *) print_error "无效输入，请重试"; sleep 2 ;;
+        esac
+    done
 }
 
 function main_menu() {
@@ -436,14 +485,14 @@ function main_menu() {
             "Ubuntu / Debian 服务器管理工具" \
             "${GREEN}" \
             "退出" \
-            "常用软件" "常用设置" "数据备份" "系统设置" "卸载")
+            "常用软件" "常用设置" "数据备份" "系统设置" "卸载与恢复")
 
         case $choice in
             1) show_software_menu ;;
             2) show_settings_menu ;;
             3) show_backup_menu ;;
             4) show_configs_menu ;;
-            5) show_rollback_menu ;;
+            5) show_uninstall_menu ;;
             0) echo ""; print_success "👋 感谢使用，再见！"; exit 0 ;;
             *) print_error "无效输入，请重试"; sleep 2 ;;
         esac

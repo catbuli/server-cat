@@ -90,7 +90,7 @@ check_menu_metadata() {
 check_source_safety() {
     local script
 
-    for script in backups/backup_menu.sh backups/create_backup.sh backups/restore_backup.sh; do
+    for script in backups/backup_menu.sh backups/create_backup.sh backups/restore_backup.sh lib/uninstall.sh; do
         if bash -c 'set +e; source "$1"; case "$-" in *e*) exit 1 ;; *) exit 0 ;; esac' _ "$PROJECT_ROOT/$script"; then
             pass "$script source 后不启用 errexit"
         else
@@ -400,6 +400,118 @@ check_cleanup_behavior() {
     fi
 }
 
+check_uninstall_behavior() {
+    local uninstall_root
+    local call_log
+
+    uninstall_root=$(mktemp -d)
+    call_log=$(mktemp)
+    mkdir -p \
+        "$uninstall_root/opt/server-cat/current" \
+        "$uninstall_root/etc/systemd/system" \
+        "$uninstall_root/etc/systemd/system/timers.target.wants" \
+        "$uninstall_root/usr/local/sbin" \
+        "$uninstall_root/usr/share/bash-completion/completions" \
+        "$uninstall_root/etc/server-cat" \
+        "$uninstall_root/var/lib/server-cat"
+    touch \
+        "$uninstall_root/etc/systemd/system/server-cat-agent.service" \
+        "$uninstall_root/etc/systemd/system/server-cat-agent.timer" \
+        "$uninstall_root/usr/share/bash-completion/completions/scat" \
+        "$uninstall_root/etc/server-cat/agent.toml" \
+        "$uninstall_root/var/lib/server-cat/alerts.json"
+    ln -s ../server-cat-agent.timer \
+        "$uninstall_root/etc/systemd/system/timers.target.wants/server-cat-agent.timer"
+    printf '%s\n' '#!/bin/bash' 'exec /opt/server-cat/current/main.sh "$@"' \
+        > "$uninstall_root/usr/local/sbin/scat"
+    cp "$uninstall_root/usr/local/sbin/scat" "$uninstall_root/usr/local/sbin/server-cat"
+
+    if SERVER_CAT_UNINSTALL_ROOT="$uninstall_root" \
+        SERVER_CAT_UNINSTALL_CALL_LOG="$call_log" \
+        bash -c '
+            source "$1/lib/utils.sh"
+            source "$1/lib/uninstall.sh"
+            systemctl() {
+                printf "%s\n" "$*" >> "$SERVER_CAT_UNINSTALL_CALL_LOG"
+                [[ "$1" != "is-active" ]]
+            }
+            server_cat_uninstall_execute 0 > /dev/null
+        ' _ "$PROJECT_ROOT" &&
+        [[ ! -e "$uninstall_root/opt/server-cat" ]] &&
+        [[ ! -e "$uninstall_root/etc/systemd/system/server-cat-agent.service" ]] &&
+        [[ ! -e "$uninstall_root/etc/systemd/system/server-cat-agent.timer" ]] &&
+        [[ ! -e "$uninstall_root/etc/systemd/system/timers.target.wants/server-cat-agent.timer" &&
+            ! -L "$uninstall_root/etc/systemd/system/timers.target.wants/server-cat-agent.timer" ]] &&
+        [[ ! -e "$uninstall_root/usr/local/sbin/scat" ]] &&
+        [[ ! -e "$uninstall_root/usr/local/sbin/server-cat" ]] &&
+        [[ ! -e "$uninstall_root/usr/share/bash-completion/completions/scat" ]] &&
+        [[ -f "$uninstall_root/etc/server-cat/agent.toml" ]] &&
+        [[ -f "$uninstall_root/var/lib/server-cat/alerts.json" ]] &&
+        grep -Fx "disable --now server-cat-agent.timer" "$call_log" > /dev/null &&
+        grep -Fx "stop server-cat-agent.service" "$call_log" > /dev/null &&
+        grep -Fx "daemon-reload" "$call_log" > /dev/null; then
+        pass "自卸载停止 Agent 并删除程序组件，默认保留配置和状态"
+    else
+        fail "自卸载停止 Agent 并删除程序组件，默认保留配置和状态"
+    fi
+
+    if SERVER_CAT_UNINSTALL_ROOT="$uninstall_root" \
+        bash -c '
+            source "$1/lib/utils.sh"
+            source "$1/lib/uninstall.sh"
+            systemctl() {
+                [[ "$1" != "is-active" ]]
+            }
+            server_cat_uninstall_execute 1 > /dev/null
+        ' _ "$PROJECT_ROOT" &&
+        [[ ! -e "$uninstall_root/etc/server-cat" ]] &&
+        [[ ! -e "$uninstall_root/var/lib/server-cat" ]]; then
+        pass "强确认模式可额外删除 Server Cat 配置和状态"
+    else
+        fail "强确认模式可额外删除 Server Cat 配置和状态"
+    fi
+
+    mkdir -p "$uninstall_root/opt/server-cat/current" "$uninstall_root/usr/local/sbin"
+    printf '%s\n' '#!/bin/bash' 'exec /other/tool "$@"' \
+        > "$uninstall_root/usr/local/sbin/scat"
+    if SERVER_CAT_UNINSTALL_ROOT="$uninstall_root" \
+        bash -c '
+            source "$1/lib/utils.sh"
+            source "$1/lib/uninstall.sh"
+            systemctl() {
+                [[ "$1" != "is-active" ]]
+            }
+            server_cat_uninstall_execute 0 > /dev/null
+        ' _ "$PROJECT_ROOT" &&
+        [[ -f "$uninstall_root/usr/local/sbin/scat" ]]; then
+        pass "自卸载不会删除非 Server Cat 管理的同名命令"
+    else
+        fail "自卸载不会删除非 Server Cat 管理的同名命令"
+    fi
+
+    mkdir -p "$uninstall_root/opt/server-cat/current"
+    if SERVER_CAT_UNINSTALL_ROOT="$uninstall_root" \
+        bash -c '
+            source "$1/lib/utils.sh"
+            source "$1/lib/uninstall.sh"
+            systemctl() {
+                if [[ "$1" == "is-active" && "$3" == "server-cat-agent.timer" ]]; then
+                    return 0
+                fi
+                return 1
+            }
+            ! server_cat_uninstall_execute 0 > /dev/null
+        ' _ "$PROJECT_ROOT" &&
+        [[ -d "$uninstall_root/opt/server-cat/current" ]]; then
+        pass "Agent 无法停止时自卸载在删除文件前中止"
+    else
+        fail "Agent 无法停止时自卸载在删除文件前中止"
+    fi
+
+    rm -rf "$uninstall_root"
+    rm -f "$call_log"
+}
+
 check_completion_behavior() {
     if bash -c 'source "$1"; COMP_WORDS=(scat agent ""); COMP_CWORD=2; _scat_completion; [[ " ${COMPREPLY[*]} " == *" check "* && " ${COMPREPLY[*]} " == *" status "* && " ${COMPREPLY[*]} " == *" configure "* && " ${COMPREPLY[*]} " == *" test-email "* && " ${COMPREPLY[*]} " == *" mute "* && " ${COMPREPLY[*]} " == *" unmute "* ]]' _ "$PROJECT_ROOT/packaging/completions/scat.bash"; then
         pass "scat 补全提供 Agent 子命令"
@@ -449,6 +561,7 @@ check_update_menu_behavior
 check_doctor_behavior
 check_config_source_behavior
 check_cleanup_behavior
+check_uninstall_behavior
 check_completion_behavior
 check_platform_behavior
 
@@ -460,6 +573,12 @@ assert_contains_literal "configs/check_update.sh" 'confirm "已完成更新验�
 assert_contains_literal "configs/doctor.sh" 'server_cat_doctor' "菜单提供运行环境检查"
 assert_contains_literal "configs/cleanup.sh" 'server_cat_cleanup_menu' "菜单提供空间清理"
 assert_contains_literal "configs/agent_config.sh" 'server_cat_agent_config_menu' "菜单提供 Agent 配置向导"
+assert_contains_literal "main.sh" 'show_uninstall_menu' "主菜单区分 Server Cat 自卸载与单项恢复"
+assert_contains_literal "main.sh" 'show_component_rollback_menu' "系统组件仅允许逐项恢复或卸载"
+assert_not_contains "main.sh" 'ROLLBACK_BATCH_MODE' "卸载菜单不再批量执行全部回滚函数"
+assert_contains_literal "lib/uninstall.sh" 'systemctl disable --now server-cat-agent.timer' "自卸载停止并禁用 Agent 定时器"
+assert_contains_literal "lib/uninstall.sh" 'server_cat_uninstall_remove_directory "$install_root"' "自卸载删除 Server Cat 程序目录"
+assert_contains_literal "lib/uninstall.sh" '已保留配置目录' "自卸载默认保留配置和状态"
 assert_contains_literal "main.sh" 'scat doctor' "命令行提供运行环境检查"
 assert_contains_literal "main.sh" 'scat agent configure' "命令行提供 Agent 配置向导"
 assert_contains_literal "lib/cleanup.sh" 'systemd-tmpfiles --clean' "临时文件清理使用系统规则"

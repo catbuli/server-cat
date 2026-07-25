@@ -7,7 +7,7 @@ Server Cat 是一个面向 Linux 服务器的本地管理工具，提供交互�
 - 常用服务安装与维护：Docker、Nginx、Certbot、Bashtop
 - 系统基础配置：SSH、防火墙、Sudo 用户、用户目录、网络优化
 - 本地备份与恢复：覆盖 SSH、Nginx、Docker、Certbot 与用户常用目录
-- 统一回滚：按功能声明执行对应的软件卸载或配置恢复
+- 安全卸载与恢复：Server Cat 自身卸载和系统组件恢复分离，软件与配置仅允许逐项操作
 - 空间清理：按系统规则清理过期临时文件，按需清理 Docker 停止容器、悬空镜像和构建缓存
 - 安全更新：检查、验证并安装已签名的发布包
 - 本地监控：磁盘空间、inode、内存、Swap、系统负载与 TLS 证书到期
@@ -69,6 +69,8 @@ sudo scat doctor
 # 在“系统设置”中选择“清理系统空间”
 # 不会清理 Docker 卷、运行中的容器、已命名镜像、业务目录或备份
 
+# 在“卸载与恢复”中卸载 Server Cat，或逐项恢复已有系统设置
+
 # 管理本地监控 Agent
 sudo scat agent configure
 sudo scat agent check
@@ -124,6 +126,14 @@ certificate_warning_days = 14
 `server-cat` 仍保留为兼容命令，新脚本和日常操作统一使用 `scat`。
 
 安装后重新打开 Bash，即可使用 `scat` 的 Tab 补全；当前终端可执行 `source /usr/share/bash-completion/completions/scat` 立即加载。
+
+## 卸载与恢复
+
+从交互菜单进入“卸载与恢复 → 卸载 Server Cat”。卸载器只停止并移除 Server Cat 自身的 Agent、systemd 单元、命令、Bash 补全和 `/opt/server-cat`，不会卸载 Docker、Nginx、Certbot、bash-completion 等软件或依赖。
+
+默认保留 `/etc/server-cat` 中的配置与 SMTP 密码，以及 `/var/lib/server-cat` 中的告警状态。只有额外输入强确认内容后才会删除这两个目录。
+
+Docker、Nginx 和系统配置等已有回滚功能位于“单项恢复或卸载”，每次只能明确选择一个项目，不提供批量卸载或全部回滚。
 
 ## 更新与信任
 
