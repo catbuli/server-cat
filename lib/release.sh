@@ -349,10 +349,10 @@ EOF
             /usr/share/bash-completion/completions/scat
     fi
     if [[ ! -f /etc/server-cat/agent.toml ]]; then
-        install -m 0644 "$release_dir/configs/agent.toml.example" /etc/server-cat/agent.toml
+        install -m 0644 "$release_dir/templates/agent.toml.example" /etc/server-cat/agent.toml
     fi
     if [[ ! -f /etc/server-cat/smtp.env ]]; then
-        install -m 0600 "$release_dir/configs/smtp.env.example" /etc/server-cat/smtp.env
+        install -m 0600 "$release_dir/templates/smtp.env.example" /etc/server-cat/smtp.env
     fi
     install -m 0644 "$release_dir/systemd/server-cat-agent.service" /etc/systemd/system/server-cat-agent.service
     install -m 0644 "$release_dir/systemd/server-cat-agent.timer" /etc/systemd/system/server-cat-agent.timer

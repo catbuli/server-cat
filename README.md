@@ -20,7 +20,8 @@ server-cat/
 ├── modules/                   # 系统配置功能
 ├── softwares/                 # 常用软件安装功能
 ├── backups/                   # 本地备份与恢复功能
-├── configs/                   # Agent 与运行配置模板
+├── configs/                   # 菜单配置功能
+├── templates/                 # Agent 与 SMTP 配置模板
 ├── lib/                       # 公共功能与签名更新逻辑
 ├── crates/server-cat-agent/   # 常驻监控 Agent
 ├── packaging/                 # 安装器与 systemd 单元
