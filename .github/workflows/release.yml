@@ -19,8 +19,35 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  verify-debian:
+    name: Verify Debian 12 compatibility
+    runs-on: ubuntu-24.04
+    container: debian:12-slim
+    steps:
+      - name: Install verification tools
+        run: |
+          set -euo pipefail
+          apt-get update
+          apt-get install -y bash ca-certificates git gnupg jq ripgrep zstd
+
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Verify Debian platform support
+        shell: bash
+        run: |
+          set -euo pipefail
+          source lib/platform.sh
+          test "$(server_cat_platform_id)" = "debian"
+          server_cat_platform_is_supported
+          test "$(server_cat_platform_package_manager)" = "apt"
+
+      - name: Run Bash checks
+        run: bash tests/run_checks.sh
+
   release:
     name: Build, sign and publish
+    needs: verify-debian
     runs-on: ubuntu-24.04
     environment: apt-production
     steps:
