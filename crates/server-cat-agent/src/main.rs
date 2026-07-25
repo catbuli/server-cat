@@ -281,8 +281,7 @@ fn run_check(config: &Config, scheduled: bool) -> Result<(), String> {
     }
 
     let alerts = collect_alerts(config)?;
-    let manual_result =
-        (!scheduled).then(|| format_manual_check_result(&alerts, config.email.enabled));
+    let check_result = format_check_result(&alerts, config.email.enabled);
     let smtp = if config.email.enabled {
         Some(load_smtp_settings()?)
     } else {
@@ -352,13 +351,11 @@ fn run_check(config: &Config, scheduled: bool) -> Result<(), String> {
         state.last_scheduled_check_unix = Some(now);
     }
     save_state(&state_path, &state)?;
-    if let Some(result) = manual_result {
-        println!("{result}");
-    }
+    println!("{check_result}");
     Ok(())
 }
 
-fn format_manual_check_result(alerts: &[DetectedAlert], email_enabled: bool) -> String {
+fn format_check_result(alerts: &[DetectedAlert], email_enabled: bool) -> String {
     if alerts.is_empty() {
         return "监控检查完成: 未发现超过阈值的指标".to_owned();
     }
@@ -881,7 +878,7 @@ reminder_hours = 6
     }
 
     #[test]
-    fn manual_check_output_lists_every_alert_with_its_threshold() {
+    fn check_output_lists_every_alert_with_its_threshold() {
         let alerts = vec![DetectedAlert {
             key: "disk:/".to_owned(),
             level: AlertLevel::Critical,
@@ -890,7 +887,7 @@ reminder_hours = 6
         }];
 
         assert_eq!(
-            format_manual_check_result(&alerts, false),
+            format_check_result(&alerts, false),
             "监控检查完成: 1 项指标处于告警状态，邮件通知未启用\n\n告警详情:\n- [严重] 磁盘 / 的磁盘使用率为 91%，警告阈值 80%，严重阈值 90%"
         );
     }
