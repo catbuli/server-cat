@@ -135,6 +135,7 @@ jobs:
           ssh "${ssh_options[@]}" "$target" "mkdir -p '$remote_base/releases' '$remote_base/channels'"
           rsync -az --checksum -e "ssh ${ssh_options[*]}" \
             "dist/releases/$VERSION/" "$target:$remote_base/releases/$VERSION/"
+          scp "${scp_options[@]}" packaging/install.sh "$target:$remote_base/install.sh"
           scp "${scp_options[@]}" dist/channels/stable.json.asc "$target:$remote_base/channels/stable.json.asc"
           scp "${scp_options[@]}" dist/channels/stable.json "$target:$remote_base/channels/stable.json"
 

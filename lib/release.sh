@@ -4,6 +4,7 @@
 
 SERVER_CAT_RELEASE_BASE_URL_DEFAULT="https://packages.catbuli.com/server-cat"
 SERVER_CAT_RELEASE_KEYRING_DEFAULT="/etc/server-cat/release-keyring.gpg"
+SERVER_CAT_INSTALL_ROOT_DEFAULT="/opt/server-cat"
 
 server_cat_release_base_url() {
     printf '%s\n' "${SERVER_CAT_RELEASE_BASE_URL:-$SERVER_CAT_RELEASE_BASE_URL_DEFAULT}"
@@ -11,6 +12,18 @@ server_cat_release_base_url() {
 
 server_cat_release_keyring() {
     printf '%s\n' "${SERVER_CAT_RELEASE_KEYRING:-$SERVER_CAT_RELEASE_KEYRING_DEFAULT}"
+}
+
+server_cat_install_root() {
+    printf '%s\n' "${SERVER_CAT_INSTALL_ROOT:-$SERVER_CAT_INSTALL_ROOT_DEFAULT}"
+}
+
+server_cat_release_platform() {
+    case "$(uname -m)" in
+        x86_64) printf '%s\n' "linux-amd64" ;;
+        aarch64|arm64) printf '%s\n' "linux-arm64" ;;
+        *) return 1 ;;
+    esac
 }
 
 server_cat_is_safe_release_path() {
@@ -197,11 +210,167 @@ server_cat_update_check() {
 }
 
 server_cat_update_apply() {
-    print_warning "签名更新安装器尚未发布，当前只能执行 update check"
-    return 1
+    local base_url keyring install_root temporary_dir platform
+    local channel_file channel_signature manifest_file manifest_signature
+    local channel_data version manifest_path artifact_url artifact_sha256 artifact_size
+    local archive_path staging_dir release_dir current_link old_target
+
+    base_url=$(server_cat_release_base_url)
+    keyring=$(server_cat_release_keyring)
+    install_root=$(server_cat_install_root)
+
+    [[ "$base_url" =~ ^https://[A-Za-z0-9.-]+(/[A-Za-z0-9._/-]+)?$ ]] || {
+        print_error "发布源地址无效"
+        return 1
+    }
+    [[ -r "$keyring" ]] || {
+        print_error "未找到发布公钥: $keyring"
+        return 1
+    }
+    server_cat_release_require_tools || return 1
+    for command_name in sha256sum tar zstd; do
+        command -v "$command_name" > /dev/null 2>&1 || {
+            print_error "缺少更新安装依赖: $command_name"
+            return 1
+        }
+    done
+    platform=$(server_cat_release_platform) || {
+        print_error "暂不支持当前 CPU 架构: $(uname -m)"
+        return 1
+    }
+    if ! temporary_dir=$(mktemp -d); then
+        print_error "无法创建临时目录"
+        return 1
+    fi
+
+    channel_file="$temporary_dir/stable.json"
+    channel_signature="$temporary_dir/stable.json.asc"
+    manifest_file="$temporary_dir/manifest.json"
+    manifest_signature="$temporary_dir/manifest.json.asc"
+    archive_path="$temporary_dir/server-cat.tar.zst"
+
+    print_step "下载并验证更新清单..."
+    if ! server_cat_release_download "$base_url/channels/stable.json" "$channel_file" ||
+        ! server_cat_release_download "$base_url/channels/stable.json.asc" "$channel_signature" ||
+        ! server_cat_release_verify "$keyring" "$channel_signature" "$channel_file"; then
+        print_error "渠道清单下载或验签失败"
+        rm -rf "$temporary_dir"
+        return 1
+    fi
+    channel_data=$(server_cat_release_read_channel "$channel_file") || {
+        rm -rf "$temporary_dir"
+        return 1
+    }
+    IFS=$'\t' read -r version manifest_path <<< "$channel_data"
+    if ! server_cat_release_download "$base_url/$manifest_path" "$manifest_file" ||
+        ! server_cat_release_download "$base_url/$manifest_path.asc" "$manifest_signature" ||
+        ! server_cat_release_verify "$keyring" "$manifest_signature" "$manifest_file"; then
+        print_error "版本清单下载或验签失败"
+        rm -rf "$temporary_dir"
+        return 1
+    fi
+    if ! jq -e --arg version "$version" --arg platform "$platform" '
+        .schema_version == 1 and .version == $version and
+        (.artifacts[$platform].url | type == "string") and
+        (.artifacts[$platform].sha256 | test("^[0-9a-f]{64}$")) and
+        (.artifacts[$platform].size | type == "number" and . > 0)
+    ' "$manifest_file" > /dev/null; then
+        print_error "版本清单缺少当前架构的有效发布包"
+        rm -rf "$temporary_dir"
+        return 1
+    fi
+    artifact_url=$(jq -r --arg platform "$platform" '.artifacts[$platform].url' "$manifest_file")
+    artifact_sha256=$(jq -r --arg platform "$platform" '.artifacts[$platform].sha256' "$manifest_file")
+    artifact_size=$(jq -r --arg platform "$platform" '.artifacts[$platform].size' "$manifest_file")
+    if ! server_cat_is_safe_release_path "$artifact_url"; then
+        print_error "发布包路径无效"
+        rm -rf "$temporary_dir"
+        return 1
+    fi
+
+    print_step "下载发布包 $version..."
+    if ! server_cat_release_download "$base_url/$artifact_url" "$archive_path"; then
+        print_error "下载发布包失败"
+        rm -rf "$temporary_dir"
+        return 1
+    fi
+    if [[ "$(wc -c < "$archive_path")" != "$artifact_size" ]] ||
+        [[ "$(sha256sum "$archive_path" | awk '{print $1}')" != "$artifact_sha256" ]]; then
+        print_error "发布包大小或 SHA-256 校验失败"
+        rm -rf "$temporary_dir"
+        return 1
+    fi
+    if zstd --decompress --stdout "$archive_path" | tar -tf - | grep -Eq '(^/|(^|/)\.\.(/|$))'; then
+        print_error "发布包包含不安全路径"
+        rm -rf "$temporary_dir"
+        return 1
+    fi
+
+    mkdir -p "$install_root/releases"
+    release_dir="$install_root/releases/$version"
+    if [[ -d "$release_dir" ]]; then
+        print_info "版本已存在，切换到已验证版本: $version"
+    else
+        staging_dir="$install_root/releases/.${version}.staging.$$"
+        mkdir -p "$staging_dir"
+        if ! zstd --decompress --stdout "$archive_path" | tar -xf - -C "$staging_dir" ||
+            [[ ! -x "$staging_dir/server-cat/main.sh" ]] ||
+            [[ ! -x "$staging_dir/server-cat/server-cat-agent" ]]; then
+            print_error "解压后的发布包结构无效"
+            rm -rf "$staging_dir" "$temporary_dir"
+            return 1
+        fi
+        mv "$staging_dir/server-cat" "$release_dir"
+        rmdir "$staging_dir"
+    fi
+
+    current_link="$install_root/current"
+    old_target=$(readlink "$current_link" 2>/dev/null || true)
+    ln -s "releases/$version" "$install_root/.current.new"
+    mv -Tf "$install_root/.current.new" "$current_link"
+    install -d -m 0755 /usr/local/sbin /etc/server-cat
+    cat > /usr/local/sbin/server-cat <<'EOF'
+#!/bin/bash
+exec /opt/server-cat/current/server-cat/main.sh "$@"
+EOF
+    chmod 0755 /usr/local/sbin/server-cat
+    if [[ ! -f /etc/server-cat/agent.toml ]]; then
+        install -m 0644 "$release_dir/server-cat/configs/agent.toml.example" /etc/server-cat/agent.toml
+    fi
+    install -m 0644 "$release_dir/server-cat/systemd/server-cat-agent.service" /etc/systemd/system/server-cat-agent.service
+    install -m 0644 "$release_dir/server-cat/systemd/server-cat-agent.timer" /etc/systemd/system/server-cat-agent.timer
+    systemctl daemon-reload
+    if ! "$release_dir/server-cat/server-cat-agent" validate-config --config /etc/server-cat/agent.toml; then
+        print_error "新版本配置校验失败，正在恢复旧版本"
+        if [[ -n "$old_target" ]]; then
+            ln -s "$old_target" "$install_root/.current.rollback"
+            mv -Tf "$install_root/.current.rollback" "$current_link"
+        fi
+        rm -rf "$temporary_dir"
+        return 1
+    fi
+    rm -rf "$temporary_dir"
+    print_success "已切换到 Server Cat $version"
+    return 0
 }
 
 server_cat_update_rollback() {
-    print_warning "签名更新安装器尚未发布，当前不能回退版本"
-    return 1
+    local version="$1"
+    local install_root release_dir
+
+    server_cat_is_valid_version "$version" || {
+        print_error "回退版本号无效"
+        return 1
+    }
+    install_root=$(server_cat_install_root)
+    release_dir="$install_root/releases/$version"
+    [[ -d "$release_dir/server-cat" ]] || {
+        print_error "未找到已安装版本: $version"
+        return 1
+    }
+    ln -s "releases/$version" "$install_root/.current.rollback"
+    mv -Tf "$install_root/.current.rollback" "$install_root/current"
+    systemctl daemon-reload
+    print_success "已回退到 Server Cat $version"
+    return 0
 }
