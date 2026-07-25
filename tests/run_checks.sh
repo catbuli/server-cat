@@ -143,6 +143,12 @@ check_menu_selector_behavior() {
         choice=$(printf "\033" | select_menu "测试菜单" "$BLUE" "返回" "" "第一项" "第二项" 2> /dev/null)
         [[ "$choice" == "0" ]] || exit 1
 
+        choice=$(printf "\177" | select_menu "测试菜单" "$BLUE" "返回" "" "第一项" "第二项" 2> /dev/null)
+        [[ "$choice" == "0" ]] || exit 1
+
+        choice=$(printf "\b" | select_menu "测试菜单" "$BLUE" "返回" "" "第一项" "第二项" 2> /dev/null)
+        [[ "$choice" == "0" ]] || exit 1
+
         export SERVER_CAT_MENU_DEFAULT_ZERO=1
         choice=$(printf "\n" | select_menu "测试菜单" "$BLUE" "返回" "" "第一项" "第二项" 2> /dev/null)
         [[ "$choice" == "0" ]] || exit 1
@@ -152,9 +158,9 @@ check_menu_selector_behavior() {
         choice=$(printf "x\n2\n" | select_menu "测试菜单" "$BLUE" "返回" "" "第一项" "第二项" 2> /dev/null)
         [[ "$choice" == "2" ]]
     ' _ "$PROJECT_ROOT"; then
-        pass "公共菜单支持方向键、j/k、Enter、Esc 与数字输入降级"
+        pass "公共菜单支持方向键、j/k、Enter、Backspace、Esc 与数字输入降级"
     else
-        fail "公共菜单支持方向键、j/k、Enter、Esc 与数字输入降级"
+        fail "公共菜单支持方向键、j/k、Enter、Backspace、Esc 与数字输入降级"
     fi
 }
 

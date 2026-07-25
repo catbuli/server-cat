@@ -202,7 +202,7 @@ server_cat_menu_render() {
     echo -e "${color}-------------------------------------${NC}" >&2
 
     if [[ "$interactive" -eq 1 ]]; then
-        printf '↑/↓ 或 j/k 选择，Enter 确认，Esc 返回；数字键可直接选择\n' >&2
+        printf '↑/↓ 或 j/k 选择，Enter 确认，Backspace/Esc 返回；数字键可直接选择\n' >&2
     fi
 }
 
@@ -271,7 +271,7 @@ select_menu() {
                 ;;
             j|J) direction="down" ;;
             k|K) direction="up" ;;
-            q|Q|0)
+            q|Q|0|$'\b'|$'\177')
                 printf '0\n'
                 return 0
                 ;;
