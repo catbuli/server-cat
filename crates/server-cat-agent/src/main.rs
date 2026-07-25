@@ -468,8 +468,12 @@ fn show_status(config: &Config) -> Result<(), String> {
     let state_path = Path::new(&config.agent.state_dir).join("alerts.json");
     let state = load_state(&state_path)?;
     let timer = read_timer_status();
+    let last_scheduled_check = format_scheduled_check(state.last_scheduled_check_unix);
 
-    println!("{}", format_agent_status(config, &state, &timer));
+    println!(
+        "{}",
+        format_agent_status(config, &state, &timer, &last_scheduled_check)
+    );
     Ok(())
 }
 
@@ -520,12 +524,36 @@ fn read_timer_property(property: &str) -> String {
         .unwrap_or_else(|| "未知".to_owned())
 }
 
-fn format_agent_status(config: &Config, state: &AgentState, timer: &TimerStatus) -> String {
+fn format_scheduled_check(timestamp: Option<u64>) -> String {
+    let Some(timestamp) = timestamp else {
+        return "尚未执行".to_owned();
+    };
+    let date_argument = format!("@{timestamp}");
+
+    Command::new("date")
+        .args(["--date", &date_argument, "+%Y-%m-%d %H:%M:%S %Z"])
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .and_then(|output| String::from_utf8(output.stdout).ok())
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| format!("Unix 时间戳 {timestamp}"))
+}
+
+fn format_agent_status(
+    config: &Config,
+    state: &AgentState,
+    timer: &TimerStatus,
+    last_scheduled_check: &str,
+) -> String {
     let mut lines = vec![
         "Server Cat Agent 状态".to_owned(),
         format!("定时器: {} ({})", timer.unit_file_state, timer.active_state),
         format!("上次定时触发: {}", timer.last_trigger),
         format!("下次定时触发: {}", timer.next_trigger),
+        format!("实际巡检间隔: {} 秒", config.schedule.interval_seconds),
+        format!("上次实际巡检: {last_scheduled_check}"),
         format!(
             "邮件通知: {}",
             if config.email.enabled {
@@ -1334,9 +1362,14 @@ reminder_hours = 6
         };
 
         assert_eq!(
-            format_agent_status(&config, &state, &timer),
-            "Server Cat Agent 状态\n定时器: enabled (active)\n上次定时触发: Fri 2026-07-25 10:00:00 CST\n下次定时触发: Fri 2026-07-25 10:01:00 CST\n邮件通知: 已启用\n巡检目标:\n- systemd 服务: nginx\n- HTTP 地址: https://example.com/health\n- Docker 容器: redis\n- 重启需求: 检查\n当前告警: 1 项\n- [严重] Docker 容器 redis 未处于运行状态"
+            format_agent_status(&config, &state, &timer, "Fri 2026-07-25 10:00:00 CST"),
+            "Server Cat Agent 状态\n定时器: enabled (active)\n上次定时触发: Fri 2026-07-25 10:00:00 CST\n下次定时触发: Fri 2026-07-25 10:01:00 CST\n实际巡检间隔: 60 秒\n上次实际巡检: Fri 2026-07-25 10:00:00 CST\n邮件通知: 已启用\n巡检目标:\n- systemd 服务: nginx\n- HTTP 地址: https://example.com/health\n- Docker 容器: redis\n- 重启需求: 检查\n当前告警: 1 项\n- [严重] Docker 容器 redis 未处于运行状态"
         );
+    }
+
+    #[test]
+    fn scheduled_check_without_state_is_reported_as_not_run() {
+        assert_eq!(format_scheduled_check(None), "尚未执行");
     }
 
     #[test]

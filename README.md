@@ -87,7 +87,7 @@ check_reboot_required = true
 
 服务未处于 `active`、HTTP 非成功响应、超时或连接失败、Docker 容器未运行均会产生严重告警。重启需求为警告级。
 
-`sudo scat agent status` 会汇总定时器状态、已配置巡检目标、邮件开关与当前活跃告警。
+`sudo scat agent status` 会汇总定时器状态、实际巡检间隔与上次执行时间、已配置巡检目标、邮件开关和当前活跃告警。
 
 `server-cat` 仍保留为兼容命令，新脚本和日常操作统一使用 `scat`。
 
