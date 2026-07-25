@@ -121,6 +121,34 @@ check_release_behavior() {
     fi
 }
 
+check_update_menu_behavior() {
+    if bash -c '
+        source "$1/lib/utils.sh"
+        source "$1/configs/check_update.sh"
+        server_cat_update_check() { :; }
+        server_cat_update_apply() { printf "%s\\n" applied; }
+        confirm() { return 0; }
+        [[ "$(update_server_cat)" == *"applied" ]]
+    ' _ "$PROJECT_ROOT"; then
+        pass "菜单更新在验签后确认并安装"
+    else
+        fail "菜单更新在验签后确认并安装"
+    fi
+
+    if bash -c '
+        source "$1/lib/utils.sh"
+        source "$1/configs/check_update.sh"
+        server_cat_update_check() { :; }
+        server_cat_update_apply() { exit 1; }
+        confirm() { return 1; }
+        update_server_cat
+    ' _ "$PROJECT_ROOT" > /dev/null; then
+        pass "取消菜单更新不会安装版本"
+    else
+        fail "取消菜单更新不会安装版本"
+    fi
+}
+
 check_completion_behavior() {
     if bash -c 'source "$1"; COMP_WORDS=(scat agent ""); COMP_CWORD=2; _scat_completion; [[ " ${COMPREPLY[*]} " == *" check "* && " ${COMPREPLY[*]} " == *" status "* && " ${COMPREPLY[*]} " == *" test-email "* && " ${COMPREPLY[*]} " == *" mute "* && " ${COMPREPLY[*]} " == *" unmute "* ]]' _ "$PROJECT_ROOT/packaging/completions/scat.bash"; then
         pass "scat 补全提供 Agent 子命令"
@@ -157,12 +185,15 @@ check_source_safety
 check_utils_behavior
 check_agent_command_behavior
 check_release_behavior
+check_update_menu_behavior
 check_completion_behavior
 check_platform_behavior
 
 assert_not_contains "configs/check_update.sh" 'reset --hard' "自更新不强制丢弃本地修改"
 assert_not_contains "configs/check_update.sh" 'git -C' "生产更新不再依赖 Git 仓库"
-assert_contains_literal "configs/check_update.sh" 'server_cat_update_check' "菜单检查更新复用签名发布源"
+assert_contains_literal "configs/check_update.sh" 'server_cat_update_check' "菜单更新复用签名发布源"
+assert_contains_literal "configs/check_update.sh" 'server_cat_update_apply' "菜单更新可安装已验证版本"
+assert_contains_literal "configs/check_update.sh" 'confirm "已完成更新验证，是否立即安装"' "菜单更新安装前要求确认"
 assert_contains_literal "main.sh" 'dispatch_command "$@"' "主入口在菜单前分发子命令"
 assert_contains_literal "main.sh" 'server_cat_agent_dispatch "${@:2}"' "主入口委托 Agent 子命令分发"
 assert_contains_literal "packaging/install.sh" 'for command_name in scat server-cat' "首次安装提供 scat 与兼容命令"

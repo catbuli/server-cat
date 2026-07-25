@@ -53,7 +53,10 @@ sudo scat --help
 # 打开交互式管理菜单
 sudo scat
 
-# 检查、安装或回退已签名更新
+# 在“系统设置”中选择“更新 Server Cat”
+# 程序会先验证更新，再询问是否安装
+
+# 用于脚本化或排障的更新命令
 sudo scat update check
 sudo scat update apply
 sudo scat update rollback <版本>
