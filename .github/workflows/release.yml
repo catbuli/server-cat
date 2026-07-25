@@ -25,6 +25,7 @@ jobs:
     container: debian:12-slim
     steps:
       - name: Install verification tools
+        shell: bash
         run: |
           set -euo pipefail
           apt-get update
