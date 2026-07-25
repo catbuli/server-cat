@@ -336,6 +336,18 @@ exec /opt/server-cat/current/main.sh "$@"
 EOF
         chmod 0755 "/usr/local/sbin/$command_name"
     done
+    if ! dpkg -s bash-completion > /dev/null 2>&1; then
+        print_step "安装 Bash Tab 补全支持..."
+        if ! apt-get update || ! apt-get install -y bash-completion; then
+            print_warning "无法安装 bash-completion，已跳过 Tab 补全安装"
+        fi
+    fi
+    if dpkg -s bash-completion > /dev/null 2>&1; then
+        install -d -m 0755 /usr/share/bash-completion/completions
+        install -m 0644 \
+            "$release_dir/completions/scat.bash" \
+            /usr/share/bash-completion/completions/scat
+    fi
     if [[ ! -f /etc/server-cat/agent.toml ]]; then
         install -m 0644 "$release_dir/configs/agent.toml.example" /etc/server-cat/agent.toml
     fi
@@ -356,6 +368,9 @@ EOF
     fi
     rm -rf "$temporary_dir"
     print_success "已切换到 Server Cat $version"
+    if dpkg -s bash-completion > /dev/null 2>&1; then
+        print_info "重新打开 Bash 或执行 source /usr/share/bash-completion/completions/scat 后可使用 Tab 补全"
+    fi
     return 0
 }
 

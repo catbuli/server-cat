@@ -70,6 +70,8 @@ Agent 默认不启用邮件和定时运行。监控阈值位于 `/etc/server-cat
 
 `server-cat` 仍保留为兼容命令，新脚本和日常操作统一使用 `scat`。
 
+安装后重新打开 Bash，即可使用 `scat` 的 Tab 补全；当前终端可执行 `source /usr/share/bash-completion/completions/scat` 立即加载。
+
 ## 更新与信任
 
 首次安装依赖 HTTPS。后续更新从 `packages.catbuli.com` 获取发布清单与安装包，客户端会验证 GPG 签名、文件大小和 SHA-256，再原子切换到新版本。

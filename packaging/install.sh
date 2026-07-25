@@ -66,10 +66,14 @@ for command_name in curl gpgv jq sha256sum tar zstd; do
     command -v "$command_name" > /dev/null 2>&1 || missing_dependencies+=("$command_name")
 done
 
+if ! dpkg -s bash-completion > /dev/null 2>&1; then
+    missing_dependencies+=(bash-completion)
+fi
+
 if [[ ${#missing_dependencies[@]} -gt 0 ]]; then
     printf '安装首次运行依赖: %s\n' "${missing_dependencies[*]}"
     apt-get update
-    apt-get install -y curl gnupg jq coreutils tar zstd
+    apt-get install -y bash-completion curl gnupg jq coreutils tar zstd
 fi
 
 temporary_dir="$(mktemp -d)"
@@ -141,7 +145,12 @@ exec /opt/server-cat/current/main.sh "$@"
 EOF
     chmod 0755 "/usr/local/sbin/$command_name"
 done
+install -d -m 0755 /usr/share/bash-completion/completions
+install -m 0644 \
+    "$INSTALL_ROOT/current/completions/scat.bash" \
+    /usr/share/bash-completion/completions/scat
 systemctl daemon-reload
 "$INSTALL_ROOT/current/server-cat-agent" validate-config --config /etc/server-cat/agent.toml
 printf '配置文件格式和阈值校验通过: /etc/server-cat/agent.toml\n'
+printf '重新打开 Bash 或执行 source /usr/share/bash-completion/completions/scat 后可使用 Tab 补全。\n'
 printf 'Server Cat %s 安装完成。\n' "$version"

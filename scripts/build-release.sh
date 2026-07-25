@@ -46,7 +46,7 @@ cleanup() {
 
 trap cleanup EXIT
 
-mkdir -p "$PACKAGE_ROOT/systemd" "$OUTPUT_DIR"
+mkdir -p "$PACKAGE_ROOT/completions" "$PACKAGE_ROOT/systemd" "$OUTPUT_DIR"
 
 for path in main.sh lib configs backups modules softwares scripts; do
     cp -a "$PROJECT_ROOT/$path" "$PACKAGE_ROOT/$path"
@@ -58,6 +58,9 @@ rm -f \
 find "$PACKAGE_ROOT" -name '.DS_Store' -type f -delete
 
 install -m 0755 "$AGENT_BINARY" "$PACKAGE_ROOT/server-cat-agent"
+install -m 0644 \
+    "$PROJECT_ROOT/packaging/completions/scat.bash" \
+    "$PACKAGE_ROOT/completions/scat.bash"
 install -m 0644 \
     "$PROJECT_ROOT/packaging/systemd/server-cat-agent.service" \
     "$PACKAGE_ROOT/systemd/server-cat-agent.service"

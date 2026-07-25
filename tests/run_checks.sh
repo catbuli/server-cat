@@ -113,6 +113,20 @@ check_release_behavior() {
     fi
 }
 
+check_completion_behavior() {
+    if bash -c 'source "$1"; COMP_WORDS=(scat agent ""); COMP_CWORD=2; _scat_completion; [[ " ${COMPREPLY[*]} " == *" check "* && " ${COMPREPLY[*]} " == *" status "* ]]' _ "$PROJECT_ROOT/packaging/completions/scat.bash"; then
+        pass "scat 补全提供 Agent 子命令"
+    else
+        fail "scat 补全提供 Agent 子命令"
+    fi
+
+    if bash -c 'source "$1"; COMP_WORDS=(scat update ""); COMP_CWORD=2; _scat_completion; [[ " ${COMPREPLY[*]} " == *" rollback "* ]]' _ "$PROJECT_ROOT/packaging/completions/scat.bash"; then
+        pass "scat 补全提供更新子命令"
+    else
+        fail "scat 补全提供更新子命令"
+    fi
+}
+
 check_platform_behavior() {
     if bash "$PROJECT_ROOT/tests/platform_checks.sh"; then
         pass "发行版兼容层识别支持范围并拒绝未验证系统"
@@ -134,6 +148,7 @@ check_menu_metadata
 check_source_safety
 check_utils_behavior
 check_release_behavior
+check_completion_behavior
 check_platform_behavior
 
 assert_not_contains "configs/check_update.sh" 'reset --hard' "自更新不强制丢弃本地修改"
@@ -142,6 +157,9 @@ assert_contains_literal "configs/check_update.sh" 'server_cat_update_check' "菜
 assert_contains_literal "main.sh" 'dispatch_command "$@"' "主入口在菜单前分发子命令"
 assert_contains_literal "packaging/install.sh" 'for command_name in scat server-cat' "首次安装提供 scat 与兼容命令"
 assert_contains_literal "lib/release.sh" 'for command_name in scat server-cat' "更新安装提供 scat 与兼容命令"
+assert_contains_literal "scripts/build-release.sh" 'packaging/completions/scat.bash' "发布包包含 scat 补全规则"
+assert_contains_literal "packaging/install.sh" 'bash-completion' "首次安装部署 Bash 补全"
+assert_contains_literal "lib/release.sh" 'bash-completion' "更新安装部署 Bash 补全"
 assert_contains_literal "lib/release.sh" 'gpgv --keyring' "更新检查使用独立公钥验证签名"
 assert_contains_literal "lib/release.sh" "--proto '=https'" "更新检查仅允许 HTTPS 发布源"
 assert_contains "lib/backup_tools.sh" 'get_real_home' "默认备份目录使用实际用户主目录"
