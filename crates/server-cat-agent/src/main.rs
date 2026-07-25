@@ -281,6 +281,8 @@ fn run_check(config: &Config, scheduled: bool) -> Result<(), String> {
     }
 
     let alerts = collect_alerts(config)?;
+    let manual_result =
+        (!scheduled).then(|| format_manual_check_result(&alerts, config.email.enabled));
     let smtp = if config.email.enabled {
         Some(load_smtp_settings()?)
     } else {
@@ -350,17 +352,32 @@ fn run_check(config: &Config, scheduled: bool) -> Result<(), String> {
         state.last_scheduled_check_unix = Some(now);
     }
     save_state(&state_path, &state)?;
-    if state.alerts.is_empty() {
-        println!("监控检查完成: 未发现超过阈值的指标");
-    } else if smtp.is_some() {
-        println!("监控检查完成: {} 项指标处于告警状态", state.alerts.len());
-    } else {
-        println!(
-            "监控检查完成: {} 项指标处于告警状态，邮件通知未启用",
-            state.alerts.len()
-        );
+    if let Some(result) = manual_result {
+        println!("{result}");
     }
     Ok(())
+}
+
+fn format_manual_check_result(alerts: &[DetectedAlert], email_enabled: bool) -> String {
+    if alerts.is_empty() {
+        return "监控检查完成: 未发现超过阈值的指标".to_owned();
+    }
+
+    let notification_status = if email_enabled {
+        "邮件通知已启用"
+    } else {
+        "邮件通知未启用"
+    };
+    let details = alerts
+        .iter()
+        .map(|alert| format!("- [{}] {}", alert.level.label(), alert.message))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    format!(
+        "监控检查完成: {} 项指标处于告警状态，{notification_status}\n\n告警详情:\n{details}",
+        alerts.len()
+    )
 }
 
 fn collect_alerts(config: &Config) -> Result<Vec<DetectedAlert>, String> {
@@ -861,6 +878,21 @@ reminder_hours = 6
         );
         assert_eq!(alerts.len(), 1);
         assert_eq!(alerts[0].level, AlertLevel::Critical);
+    }
+
+    #[test]
+    fn manual_check_output_lists_every_alert_with_its_threshold() {
+        let alerts = vec![DetectedAlert {
+            key: "disk:/".to_owned(),
+            level: AlertLevel::Critical,
+            label: "磁盘 /".to_owned(),
+            message: "磁盘 / 的磁盘使用率为 91%，警告阈值 80%，严重阈值 90%".to_owned(),
+        }];
+
+        assert_eq!(
+            format_manual_check_result(&alerts, false),
+            "监控检查完成: 1 项指标处于告警状态，邮件通知未启用\n\n告警详情:\n- [严重] 磁盘 / 的磁盘使用率为 91%，警告阈值 80%，严重阈值 90%"
+        );
     }
 
     #[test]
