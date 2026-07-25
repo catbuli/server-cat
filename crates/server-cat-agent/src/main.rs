@@ -486,6 +486,7 @@ fn ignored_filesystem(filesystem_type: &str) -> bool {
             | "proc"
             | "pstore"
             | "securityfs"
+            | "squashfs"
             | "sysfs"
             | "tmpfs"
             | "tracefs"
@@ -859,6 +860,12 @@ reminder_hours = 6
         assert_eq!(usage_percent(100, 100), Some(0));
         assert_eq!(usage_percent(100, 0), Some(100));
         assert_eq!(usage_percent(100, 20), Some(80));
+    }
+
+    #[test]
+    fn ignores_snap_squashfs_mounts() {
+        assert!(ignored_filesystem("squashfs"));
+        assert!(!ignored_filesystem("ext4"));
     }
 
     #[test]
