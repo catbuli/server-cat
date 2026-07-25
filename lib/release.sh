@@ -5,6 +5,7 @@
 SERVER_CAT_RELEASE_BASE_URL_DEFAULT="https://packages.catbuli.com/server-cat"
 SERVER_CAT_RELEASE_KEYRING_DEFAULT="/etc/server-cat/release-keyring.gpg"
 SERVER_CAT_INSTALL_ROOT_DEFAULT="/opt/server-cat"
+SERVER_CAT_UPDATE_AVAILABLE=0
 
 server_cat_release_base_url() {
     printf '%s\n' "${SERVER_CAT_RELEASE_BASE_URL:-$SERVER_CAT_RELEASE_BASE_URL_DEFAULT}"
@@ -38,6 +39,20 @@ server_cat_is_safe_release_path() {
 
 server_cat_is_valid_version() {
     [[ "$1" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z][0-9A-Za-z.-]*)?$ ]]
+}
+
+server_cat_installed_version() {
+    local install_root
+    local version_file
+    local version
+
+    install_root=$(server_cat_install_root)
+    version_file="$install_root/current/VERSION"
+    [[ -r "$version_file" ]] || return 1
+
+    IFS= read -r version < "$version_file"
+    server_cat_is_valid_version "$version" || return 1
+    printf '%s\n' "$version"
 }
 
 server_cat_release_require_tools() {
@@ -137,6 +152,9 @@ server_cat_update_check() {
     local version
     local manifest_path
     local published_at
+    local installed_version
+
+    SERVER_CAT_UPDATE_AVAILABLE=0
 
     base_url=$(server_cat_release_base_url)
     keyring=$(server_cat_release_keyring)
@@ -205,6 +223,18 @@ server_cat_update_check() {
 
     print_success "已验证 stable 通道版本: $version"
     print_info "发布时间: $published_at"
+    if installed_version=$(server_cat_installed_version); then
+        print_info "本机版本: $installed_version"
+        if [[ "$installed_version" == "$version" ]]; then
+            print_success "当前已是最新版本"
+        else
+            SERVER_CAT_UPDATE_AVAILABLE=1
+            print_info "发现可安装更新: $installed_version -> $version"
+        fi
+    else
+        SERVER_CAT_UPDATE_AVAILABLE=1
+        print_warning "未识别本机版本，将按已验证版本安装"
+    fi
     rm -rf "$temporary_dir"
     return 0
 }

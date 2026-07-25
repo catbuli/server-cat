@@ -6,6 +6,7 @@ PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TEST_ROOT="$(mktemp -d)"
 FIXTURE_DIR="$TEST_ROOT/fixtures"
 MOCK_BIN="$TEST_ROOT/bin"
+INSTALL_ROOT="$TEST_ROOT/install"
 
 cleanup() {
     rm -rf "$TEST_ROOT"
@@ -15,6 +16,7 @@ trap cleanup EXIT
 
 mkdir -p "$FIXTURE_DIR" "$MOCK_BIN"
 touch "$TEST_ROOT/release-keyring.gpg"
+mkdir -p "$INSTALL_ROOT/current"
 
 printf '%s\n' \
     '{"schema_version":1,"channel":"stable","version":"0.1.0","manifest":"releases/0.1.0/manifest.json"}' \
@@ -81,8 +83,30 @@ run_update_check() {
         bash -c 'source "$1/lib/utils.sh"; source "$1/lib/release.sh"; server_cat_update_check' _ "$PROJECT_ROOT"
 }
 
+run_update_check_with_installed_version() {
+    local installed_version="$1"
+
+    printf '%s\n' "$installed_version" > "$INSTALL_ROOT/current/VERSION"
+    PATH="$MOCK_BIN:$PATH" \
+        SERVER_CAT_TEST_FIXTURE_DIR="$FIXTURE_DIR" \
+        SERVER_CAT_RELEASE_BASE_URL="https://packages.example.test/server-cat" \
+        SERVER_CAT_RELEASE_KEYRING="$TEST_ROOT/release-keyring.gpg" \
+        SERVER_CAT_INSTALL_ROOT="$INSTALL_ROOT" \
+        bash -c 'source "$1/lib/utils.sh"; source "$1/lib/release.sh"; server_cat_update_check > /dev/null && [[ "$SERVER_CAT_UPDATE_AVAILABLE" -eq "$2" ]]' _ "$PROJECT_ROOT" "$2"
+}
+
 if ! run_update_check > /dev/null; then
     printf 'FAIL 有效且已签名的发布清单应通过更新检查\n' >&2
+    exit 1
+fi
+
+if ! run_update_check_with_installed_version "0.1.0" "0"; then
+    printf 'FAIL 本机已是 stable 版本时不应提示安装更新\n' >&2
+    exit 1
+fi
+
+if ! run_update_check_with_installed_version "0.0.9" "1"; then
+    printf 'FAIL stable 版本较新时应提示安装更新\n' >&2
     exit 1
 fi
 

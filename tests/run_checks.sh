@@ -125,7 +125,7 @@ check_update_menu_behavior() {
     if bash -c '
         source "$1/lib/utils.sh"
         source "$1/configs/check_update.sh"
-        server_cat_update_check() { :; }
+        server_cat_update_check() { SERVER_CAT_UPDATE_AVAILABLE=1; }
         server_cat_update_apply() { printf "%s\\n" applied; }
         confirm() { return 0; }
         [[ "$(update_server_cat)" == *"applied" ]]
@@ -138,7 +138,7 @@ check_update_menu_behavior() {
     if bash -c '
         source "$1/lib/utils.sh"
         source "$1/configs/check_update.sh"
-        server_cat_update_check() { :; }
+        server_cat_update_check() { SERVER_CAT_UPDATE_AVAILABLE=1; }
         server_cat_update_apply() { exit 1; }
         confirm() { return 1; }
         update_server_cat
@@ -146,6 +146,74 @@ check_update_menu_behavior() {
         pass "取消菜单更新不会安装版本"
     else
         fail "取消菜单更新不会安装版本"
+    fi
+
+    if bash -c '
+        source "$1/lib/utils.sh"
+        source "$1/configs/check_update.sh"
+        server_cat_update_check() { SERVER_CAT_UPDATE_AVAILABLE=0; }
+        server_cat_update_apply() { exit 1; }
+        update_server_cat
+    ' _ "$PROJECT_ROOT" > /dev/null; then
+        pass "菜单在已是最新版本时不会请求安装"
+    else
+        fail "菜单在已是最新版本时不会请求安装"
+    fi
+}
+
+check_doctor_behavior() {
+    local doctor_root
+
+    doctor_root=$(mktemp -d)
+    mkdir -p "$doctor_root/install/current" "$doctor_root/etc"
+    printf '%s\n' "0.1.0" > "$doctor_root/install/current/VERSION"
+    printf '%s\n' '#!/bin/bash' 'exit 0' > "$doctor_root/server-cat-agent"
+    chmod 0755 "$doctor_root/server-cat-agent"
+    printf '%s\n' '[agent]' > "$doctor_root/etc/agent.toml"
+    chmod 0600 "$doctor_root/etc/agent.toml"
+
+    if SERVER_CAT_INSTALL_ROOT="$doctor_root/install" \
+        SERVER_CAT_AGENT_BINARY="$doctor_root/server-cat-agent" \
+        SERVER_CAT_AGENT_CONFIG="$doctor_root/etc/agent.toml" \
+        bash -c '
+            source "$1/lib/utils.sh"
+            source "$1/lib/release.sh"
+            source "$1/lib/doctor.sh"
+            curl() { :; }
+            gpgv() { :; }
+            jq() { :; }
+            sha256sum() { :; }
+            tar() { :; }
+            zstd() { :; }
+            systemctl() {
+                case "$1" in
+                    cat) return 0 ;;
+                    is-enabled) printf "%s\\n" disabled; return 0 ;;
+                    is-active) printf "%s\\n" inactive; return 3 ;;
+                esac
+            }
+            server_cat_update_check() { SERVER_CAT_UPDATE_AVAILABLE=0; }
+            server_cat_doctor
+        ' _ "$PROJECT_ROOT" > /dev/null; then
+        pass "doctor 可验证完整运行环境"
+    else
+        fail "doctor 可验证完整运行环境"
+    fi
+
+    rm -rf "$doctor_root"
+}
+
+check_config_source_behavior() {
+    if bash -c '
+        source_dir="/server-cat-root"
+        SCRIPT_DIR="$source_dir"
+        source "$1/configs/check_update.sh"
+        source "$1/configs/doctor.sh"
+        [[ "$SCRIPT_DIR" == "$source_dir" ]]
+    ' _ "$PROJECT_ROOT"; then
+        pass "配置菜单加载不会覆盖主入口目录"
+    else
+        fail "配置菜单加载不会覆盖主入口目录"
     fi
 }
 
@@ -186,6 +254,8 @@ check_utils_behavior
 check_agent_command_behavior
 check_release_behavior
 check_update_menu_behavior
+check_doctor_behavior
+check_config_source_behavior
 check_completion_behavior
 check_platform_behavior
 
@@ -194,6 +264,8 @@ assert_not_contains "configs/check_update.sh" 'git -C' "生产更新不再依赖
 assert_contains_literal "configs/check_update.sh" 'server_cat_update_check' "菜单更新复用签名发布源"
 assert_contains_literal "configs/check_update.sh" 'server_cat_update_apply' "菜单更新可安装已验证版本"
 assert_contains_literal "configs/check_update.sh" 'confirm "已完成更新验证，是否立即安装"' "菜单更新安装前要求确认"
+assert_contains_literal "configs/doctor.sh" 'server_cat_doctor' "菜单提供运行环境检查"
+assert_contains_literal "main.sh" 'scat doctor' "命令行提供运行环境检查"
 assert_contains_literal "main.sh" 'dispatch_command "$@"' "主入口在菜单前分发子命令"
 assert_contains_literal "main.sh" 'server_cat_agent_dispatch "${@:2}"' "主入口委托 Agent 子命令分发"
 assert_contains_literal "packaging/install.sh" 'for command_name in scat server-cat' "首次安装提供 scat 与兼容命令"

@@ -61,6 +61,9 @@ sudo scat update check
 sudo scat update apply
 sudo scat update rollback <版本>
 
+# 检查安装、配置、依赖、定时器与发布通道
+sudo scat doctor
+
 # 管理本地监控 Agent
 sudo scat agent check
 sudo scat agent enable

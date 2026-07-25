@@ -12,6 +12,7 @@ CONFIGS_DIR="$SCRIPT_DIR/configs"
 source "$SCRIPT_DIR/lib/utils.sh"
 source "$SCRIPT_DIR/lib/platform.sh"
 source "$SCRIPT_DIR/lib/release.sh"
+source "$SCRIPT_DIR/lib/doctor.sh"
 source "$SCRIPT_DIR/lib/agent.sh"
 
 function show_command_help() {
@@ -21,6 +22,7 @@ function show_command_help() {
   sudo scat update check          检查并验证 stable 发布版本
   sudo scat update apply          安装已验证的更新
   sudo scat update rollback 版本   回退已安装版本
+  sudo scat doctor                检查 Server Cat 运行环境
   sudo scat agent check           立即执行一次监控检查
   sudo scat agent enable          启用每分钟监控
   sudo scat agent disable         停止并禁用每分钟监控
@@ -76,6 +78,13 @@ function dispatch_command() {
             ;;
         agent)
             server_cat_agent_dispatch "${@:2}"
+            ;;
+        doctor)
+            [[ $# -eq 1 ]] || {
+                print_error "用法: scat doctor"
+                return 1
+            }
+            server_cat_doctor
             ;;
         help|--help|-h)
             show_command_help
