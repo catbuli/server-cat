@@ -42,6 +42,8 @@ struct ThresholdConfig {
     inode_warning_percent: u8,
     inode_critical_percent: u8,
     memory_warning_percent: u8,
+    #[serde(default = "default_swap_warning_percent")]
+    swap_warning_percent: u8,
     load_warning_per_cpu: f64,
 }
 
@@ -81,6 +83,10 @@ impl Default for CheckConfig {
 
 fn default_http_timeout_seconds() -> u64 {
     10
+}
+
+fn default_swap_warning_percent() -> u8 {
+    80
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -280,6 +286,10 @@ fn validate_config(config: &Config) -> Result<(), String> {
         || config.thresholds.memory_warning_percent > 100
     {
         return Err("memory_warning_percent 必须在 1 到 100 之间".to_owned());
+    }
+
+    if config.thresholds.swap_warning_percent == 0 || config.thresholds.swap_warning_percent > 100 {
+        return Err("swap_warning_percent 必须在 1 到 100 之间".to_owned());
     }
 
     if !config.thresholds.load_warning_per_cpu.is_finite()
@@ -678,6 +688,20 @@ fn collect_alerts(config: &Config) -> Result<Vec<DetectedAlert>, String> {
         });
     }
 
+    if let Some(swap_percent) = swap_usage_percent()?
+        && swap_percent >= config.thresholds.swap_warning_percent
+    {
+        alerts.push(DetectedAlert {
+            key: "swap".to_owned(),
+            level: AlertLevel::Warning,
+            label: "交换空间".to_owned(),
+            message: format!(
+                "交换空间使用率为 {swap_percent}%，阈值为 {}%",
+                config.thresholds.swap_warning_percent
+            ),
+        });
+    }
+
     let (load_average, cpu_count) = load_average_per_cpu()?;
     if load_average >= config.thresholds.load_warning_per_cpu {
         alerts.push(DetectedAlert {
@@ -940,6 +964,21 @@ fn add_percent_alert(
 fn memory_usage_percent() -> Result<u8, String> {
     let contents = fs::read_to_string("/proc/meminfo")
         .map_err(|error| format!("无法读取 /proc/meminfo: {error}"))?;
+    usage_percent_from_meminfo(&contents, "MemTotal", "MemAvailable")?
+        .ok_or_else(|| "内存总量不能为 0".to_owned())
+}
+
+fn swap_usage_percent() -> Result<Option<u8>, String> {
+    let contents = fs::read_to_string("/proc/meminfo")
+        .map_err(|error| format!("无法读取 /proc/meminfo: {error}"))?;
+    usage_percent_from_meminfo(&contents, "SwapTotal", "SwapFree")
+}
+
+fn usage_percent_from_meminfo(
+    contents: &str,
+    total_key: &str,
+    available_key: &str,
+) -> Result<Option<u8>, String> {
     let mut total = None;
     let mut available = None;
 
@@ -952,17 +991,15 @@ fn memory_usage_percent() -> Result<u8, String> {
             .next()
             .and_then(|number| number.parse::<u64>().ok());
         match key {
-            "MemTotal" => total = value,
-            "MemAvailable" => available = value,
+            key if key == total_key => total = value,
+            key if key == available_key => available = value,
             _ => {}
         }
     }
 
     match (total, available) {
-        (Some(total), Some(available)) => {
-            usage_percent(total, available).ok_or_else(|| "内存总量不能为 0".to_owned())
-        }
-        _ => Err("/proc/meminfo 缺少 MemTotal 或 MemAvailable".to_owned()),
+        (Some(total), Some(available)) => Ok(usage_percent(total, available)),
+        _ => Err(format!("/proc/meminfo 缺少 {total_key} 或 {available_key}")),
     }
 }
 
@@ -1241,6 +1278,7 @@ reminder_hours = 6
         assert_eq!(config.checks.http_timeout_seconds, 10);
         assert!(config.checks.docker_containers.is_empty());
         assert!(!config.checks.check_reboot_required);
+        assert_eq!(config.thresholds.swap_warning_percent, 80);
     }
 
     #[test]
@@ -1287,6 +1325,16 @@ reminder_hours = 6
     }
 
     #[test]
+    fn rejects_invalid_swap_threshold() {
+        let invalid = VALID_CONFIG.replace(
+            "memory_warning_percent = 85",
+            "memory_warning_percent = 85\nswap_warning_percent = 0",
+        );
+        let config: Config = toml::from_str(&invalid).expect("configuration parses");
+        assert!(validate_config(&config).is_err());
+    }
+
+    #[test]
     fn rejects_enabled_email_without_recipients() {
         let invalid = VALID_CONFIG.replace("recipients = [\"ops@example.com\"]", "recipients = []");
         let config: Config = toml::from_str(&invalid).expect("configuration parses");
@@ -1299,6 +1347,30 @@ reminder_hours = 6
         assert_eq!(usage_percent(100, 100), Some(0));
         assert_eq!(usage_percent(100, 0), Some(100));
         assert_eq!(usage_percent(100, 20), Some(80));
+    }
+
+    #[test]
+    fn parses_memory_and_swap_usage_from_meminfo() {
+        let contents = "MemTotal:       1000 kB\nMemAvailable:    200 kB\nSwapTotal:        500 kB\nSwapFree:         100 kB\n";
+
+        assert_eq!(
+            usage_percent_from_meminfo(contents, "MemTotal", "MemAvailable"),
+            Ok(Some(80))
+        );
+        assert_eq!(
+            usage_percent_from_meminfo(contents, "SwapTotal", "SwapFree"),
+            Ok(Some(80))
+        );
+    }
+
+    #[test]
+    fn ignores_swap_check_when_no_swap_is_configured() {
+        let contents = "SwapTotal:          0 kB\nSwapFree:           0 kB\n";
+
+        assert_eq!(
+            usage_percent_from_meminfo(contents, "SwapTotal", "SwapFree"),
+            Ok(None)
+        );
     }
 
     #[test]

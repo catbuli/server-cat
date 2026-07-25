@@ -11,6 +11,7 @@ disk_critical_percent = 90
 inode_warning_percent = 80
 inode_critical_percent = 90
 memory_warning_percent = 85
+swap_warning_percent = 80
 load_warning_per_cpu = 2.0
 
 [email]
