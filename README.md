@@ -9,7 +9,7 @@ Server Cat 是一个面向 Linux 服务器的本地管理工具，提供交互�
 - 本地备份与恢复：覆盖 SSH、Nginx、Docker、Certbot 与用户常用目录
 - 统一回滚：按功能声明执行对应的软件卸载或配置恢复
 - 空间清理：按系统规则清理过期临时文件，按需清理 Docker 停止容器、悬空镜像和构建缓存
-- 安全更新：检查、验证、安装和回退已签名的发布包
+- 安全更新：检查、验证并安装已签名的发布包
 - 本地监控：磁盘空间、inode、内存、Swap、系统负载与 TLS 证书到期
 - 邮件告警：支持 SMTP 告警、等级升级提醒与恢复通知
 
@@ -68,6 +68,7 @@ sudo scat doctor
 # 不会清理 Docker 卷、运行中的容器、已命名镜像、业务目录或备份
 
 # 管理本地监控 Agent
+sudo scat agent configure
 sudo scat agent check
 sudo scat agent enable
 sudo scat agent disable
@@ -78,7 +79,7 @@ sudo scat agent unmute
 
 ## 监控与邮件
 
-Agent 默认不启用邮件和定时运行。所有监控、邮件和 SMTP 配置均位于权限为 `0600` 的 `/etc/server-cat/agent.toml`。完成本机配置后，执行 `sudo scat agent enable` 启用定时监控。
+Agent 默认不启用邮件和定时运行。可从“系统设置 → 配置监控 Agent”或 `sudo scat agent configure` 配置巡检周期、资源阈值、额外巡检目标和邮件通知。所有配置均保存到权限为 `0600` 的 `/etc/server-cat/agent.toml`，保存前会先校验，配置错误时不会覆盖原文件。
 
 ```toml
 [email]

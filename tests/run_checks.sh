@@ -111,6 +111,70 @@ check_agent_command_behavior() {
     else
         fail "Agent 子命令通过独立分发层执行"
     fi
+
+    if bash -c '
+        source "$1/lib/utils.sh"
+        source "$1/lib/agent.sh"
+        server_cat_agent_config_menu() { printf "%s\n" configured; }
+        [[ "$(server_cat_agent_dispatch configure)" == "configured" ]]
+    ' _ "$PROJECT_ROOT"; then
+        pass "Agent 配置命令通过独立分发层执行"
+    else
+        fail "Agent 配置命令通过独立分发层执行"
+    fi
+}
+
+check_agent_config_behavior() {
+    local config_root
+    local config_file
+    local config_mode
+
+    config_root=$(mktemp -d)
+    config_file="$config_root/agent.toml"
+    cp "$PROJECT_ROOT/templates/agent.toml.example" "$config_file"
+
+    if bash -c '
+        source "$1/lib/utils.sh"
+        source "$1/lib/agent_config.sh"
+        config_file="$2"
+        server_cat_agent_config_set "$config_file" thresholds memory_warning_percent 91 &&
+            [[ "$(server_cat_agent_config_read "$config_file" thresholds memory_warning_percent)" == "91" ]] &&
+            [[ "$(server_cat_agent_config_toml_array "nginx, docker")" == "[\"nginx\", \"docker\"]" ]]
+    ' _ "$PROJECT_ROOT" "$config_file"; then
+        pass "Agent 配置向导可安全更新字段并生成 TOML 数组"
+    else
+        fail "Agent 配置向导可安全更新字段并生成 TOML 数组"
+    fi
+
+    config_mode=$(stat -c '%a' "$config_file" 2>/dev/null || stat -f '%Lp' "$config_file" 2>/dev/null)
+    if [[ "$config_mode" == "600" ]]; then
+        pass "Agent 配置向导保持配置权限为 0600"
+    else
+        fail "Agent 配置向导保持配置权限为 0600"
+    fi
+
+    cp "$PROJECT_ROOT/templates/agent.toml.example" "$config_file"
+    cp "$config_file" "$config_root/original.toml"
+    cp "$config_file" "$config_root/staged.toml"
+    server_cat_agent_config_set_for_test() {
+        bash -c '
+            source "$1/lib/utils.sh"
+            source "$1/lib/agent_config.sh"
+            SERVER_CAT_AGENT_CONFIG="$2"
+            SERVER_CAT_AGENT_BINARY=/usr/bin/false
+            server_cat_agent_config_set "$3" thresholds memory_warning_percent 91
+            ! server_cat_agent_config_save "$3" > /dev/null 2>&1
+        ' _ "$PROJECT_ROOT" "$config_file" "$config_root/staged.toml"
+    }
+    if server_cat_agent_config_set_for_test &&
+        cmp -s "$config_file" "$config_root/original.toml" &&
+        [[ ! -e "$config_root/staged.toml" ]]; then
+        pass "Agent 配置校验失败时保留原配置并清理临时文件"
+    else
+        fail "Agent 配置校验失败时保留原配置并清理临时文件"
+    fi
+
+    rm -rf "$config_root"
 }
 
 check_release_behavior() {
@@ -237,6 +301,7 @@ check_config_source_behavior() {
         source "$1/configs/check_update.sh"
         source "$1/configs/doctor.sh"
         source "$1/configs/cleanup.sh"
+        source "$1/configs/agent_config.sh"
         [[ "$SCRIPT_DIR" == "$source_dir" ]]
     ' _ "$PROJECT_ROOT"; then
         pass "配置菜单加载不会覆盖主入口目录"
@@ -277,7 +342,7 @@ check_cleanup_behavior() {
 }
 
 check_completion_behavior() {
-    if bash -c 'source "$1"; COMP_WORDS=(scat agent ""); COMP_CWORD=2; _scat_completion; [[ " ${COMPREPLY[*]} " == *" check "* && " ${COMPREPLY[*]} " == *" status "* && " ${COMPREPLY[*]} " == *" test-email "* && " ${COMPREPLY[*]} " == *" mute "* && " ${COMPREPLY[*]} " == *" unmute "* ]]' _ "$PROJECT_ROOT/packaging/completions/scat.bash"; then
+    if bash -c 'source "$1"; COMP_WORDS=(scat agent ""); COMP_CWORD=2; _scat_completion; [[ " ${COMPREPLY[*]} " == *" check "* && " ${COMPREPLY[*]} " == *" status "* && " ${COMPREPLY[*]} " == *" configure "* && " ${COMPREPLY[*]} " == *" test-email "* && " ${COMPREPLY[*]} " == *" mute "* && " ${COMPREPLY[*]} " == *" unmute "* ]]' _ "$PROJECT_ROOT/packaging/completions/scat.bash"; then
         pass "scat 补全提供 Agent 子命令"
     else
         fail "scat 补全提供 Agent 子命令"
@@ -317,6 +382,7 @@ check_menu_metadata
 check_source_safety
 check_utils_behavior
 check_agent_command_behavior
+check_agent_config_behavior
 check_release_behavior
 check_legacy_layout_migration_behavior
 check_update_menu_behavior
@@ -333,7 +399,9 @@ assert_contains_literal "configs/check_update.sh" 'server_cat_update_apply' "菜
 assert_contains_literal "configs/check_update.sh" 'confirm "已完成更新验证，是否立即安装"' "菜单更新安装前要求确认"
 assert_contains_literal "configs/doctor.sh" 'server_cat_doctor' "菜单提供运行环境检查"
 assert_contains_literal "configs/cleanup.sh" 'server_cat_cleanup_menu' "菜单提供空间清理"
+assert_contains_literal "configs/agent_config.sh" 'server_cat_agent_config_menu' "菜单提供 Agent 配置向导"
 assert_contains_literal "main.sh" 'scat doctor' "命令行提供运行环境检查"
+assert_contains_literal "main.sh" 'scat agent configure' "命令行提供 Agent 配置向导"
 assert_contains_literal "lib/cleanup.sh" 'systemd-tmpfiles --clean' "临时文件清理使用系统规则"
 assert_not_contains "lib/cleanup.sh" 'docker volume prune' "空间清理不删除 Docker 卷"
 assert_not_contains "lib/cleanup.sh" 'docker system prune' "空间清理不执行 Docker 全量清理"

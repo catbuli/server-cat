@@ -45,6 +45,13 @@ server_cat_agent_dispatch() {
             }
             "$agent_binary" status
             ;;
+        configure)
+            [[ $# -eq 1 ]] || {
+                print_error "用法: scat agent configure"
+                return 1
+            }
+            server_cat_agent_config_menu
+            ;;
         test-email)
             [[ $# -eq 1 ]] || {
                 print_error "用法: scat agent test-email"

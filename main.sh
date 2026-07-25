@@ -14,6 +14,7 @@ source "$SCRIPT_DIR/lib/platform.sh"
 source "$SCRIPT_DIR/lib/release.sh"
 source "$SCRIPT_DIR/lib/doctor.sh"
 source "$SCRIPT_DIR/lib/agent.sh"
+source "$SCRIPT_DIR/lib/agent_config.sh"
 
 function show_command_help() {
     cat <<'EOF'
@@ -26,6 +27,7 @@ function show_command_help() {
   sudo scat agent enable          启用每分钟监控
   sudo scat agent disable         停止并禁用每分钟监控
   sudo scat agent status          查看监控汇总状态
+  sudo scat agent configure       打开 Agent 配置向导
   sudo scat agent test-email      发送 SMTP 测试邮件
   sudo scat agent mute 30m        静默邮件通知 30 分钟
   sudo scat agent unmute          立即恢复邮件通知
