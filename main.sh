@@ -223,33 +223,25 @@ function show_generic_menu() {
     local all_verb="$5"
     local empty_msg="$6"
     local submenu_func="$7"
+    local choice
 
     declare -a menu_funcs menu_names menu_priorities
     load_menu_items "$dir" true
 
     local item_funcs=("${menu_funcs[@]}")
     local item_names=("${menu_names[@]}")
+    local description=""
+    local -a options
+
+    if [[ ${#item_funcs[@]} -eq 0 ]]; then
+        description="$empty_msg"
+        options=()
+    else
+        options=("$all_verb" "${item_names[@]}")
+    fi
 
     while true; do
-        clear_screen
-        echo -e "${BLUE}=====================================${NC}"
-        echo -e "${BLUE}    $icon $title                   ${NC}"
-        echo -e "${BLUE}=====================================${NC}"
-
-        if [ ${#item_funcs[@]} -eq 0 ]; then
-            print_warning "$empty_msg"
-        else
-            echo "1. $all_verb"
-            local i=2
-            for name in "${item_names[@]}"; do
-                echo "$i. $name"
-                ((i++))
-            done
-        fi
-
-        echo "0. 返回主菜单"
-        echo -e "${BLUE}-------------------------------------${NC}"
-        read -p "请输入你的选择 [0-${#item_names[@]}]: " choice
+        choice=$(select_menu "$icon $title" "$BLUE" "返回主菜单" "$description" "${options[@]}")
 
         if ! is_number "$choice"; then
             print_error "无效输入，请重试"
@@ -323,6 +315,8 @@ function show_settings_menu() {
 }
 
 function show_configs_menu() {
+    local choice
+
     declare -a menu_funcs menu_names menu_priorities
     load_menu_items "$CONFIGS_DIR" true
 
@@ -336,20 +330,7 @@ function show_configs_menu() {
     fi
 
     while true; do
-        clear_screen
-        echo -e "${BLUE}=====================================${NC}"
-        echo -e "${BLUE}    ⚙️  系统设置                 ${NC}"
-        echo -e "${BLUE}=====================================${NC}"
-
-        local i=1
-        for name in "${item_names[@]}"; do
-            echo "$i. $name"
-            ((i++))
-        done
-
-        echo "0. 返回主菜单"
-        echo -e "${BLUE}-------------------------------------${NC}"
-        read -p "请输入你的选择 [0-${#item_names[@]}]: " choice
+        choice=$(select_menu "⚙️  系统设置" "$BLUE" "返回主菜单" "" "${item_names[@]}")
 
         if ! is_number "$choice"; then
             print_error "无效输入，请重试"

@@ -219,6 +219,8 @@ function show_backup_contents() {
 
 function do_restore_backup() {
     local backup_name="$1"
+    local choice
+    local SERVER_CAT_MENU_DEFAULT_ZERO=1
 
     if [ -z "$backup_name" ]; then
         print_error "请指定备份名称"
@@ -257,20 +259,20 @@ function do_restore_backup() {
         return 1
     fi
 
-    # 显示备份内容
-    show_backup_contents "$extracted_dir"
-
-    # 交互式选择
-    print_prompt "请选择恢复选项："
-    echo "  1. 恢复全部"
-    echo "  2. 仅恢复 SSH 配置"
-    echo "  3. 仅恢复 SSL 证书"
-    echo "  4. 仅恢复 Nginx"
-    echo "  5. 仅恢复 Docker"
-    echo "  6. 仅恢复证书续期"
-    echo "  7. 仅恢复用户目录"
-    echo "  0. 取消"
-    read -p "请输入选项 [0-7]: " choice
+    local backup_contents
+    backup_contents=$(show_backup_contents "$extracted_dir")
+    choice=$(select_menu \
+        "选择恢复内容" \
+        "$BLUE" \
+        "取消恢复" \
+        "$backup_contents" \
+        "恢复全部" \
+        "仅恢复 SSH 配置" \
+        "仅恢复 SSL 证书" \
+        "仅恢复 Nginx" \
+        "仅恢复 Docker" \
+        "仅恢复证书续期" \
+        "仅恢复用户目录")
 
     case "$choice" in
         1) restore_all "$extracted_dir" ;;

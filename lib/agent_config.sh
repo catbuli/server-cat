@@ -492,21 +492,19 @@ server_cat_agent_config_menu() {
     fi
 
     while true; do
-        clear_screen
-        echo -e "${BLUE}=====================================${NC}"
-        echo -e "${BLUE}    🐈 配置监控 Agent              ${NC}"
-        echo -e "${BLUE}=====================================${NC}"
-        echo "1. 查看 Agent 状态"
-        echo "2. 配置巡检周期与资源阈值"
-        echo "3. 配置额外巡检目标"
-        echo "4. 配置邮件通知"
-        echo "5. 校验当前配置"
-        echo "6. 启用定时巡检"
-        echo "7. 停止定时巡检"
-        echo "8. 发送测试邮件"
-        echo "0. 返回上一级"
-        echo -e "${BLUE}-------------------------------------${NC}"
-        read -r -p "请输入你的选择 [0-8]: " choice
+        choice=$(select_menu \
+            "🐈 配置监控 Agent" \
+            "$BLUE" \
+            "返回上一级" \
+            "" \
+            "查看 Agent 状态" \
+            "配置巡检周期与资源阈值" \
+            "配置额外巡检目标" \
+            "配置邮件通知" \
+            "校验当前配置" \
+            "启用定时巡检" \
+            "停止定时巡检" \
+            "发送测试邮件")
 
         case "$choice" in
             1) "$agent_binary" status ;;

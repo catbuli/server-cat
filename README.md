@@ -50,6 +50,8 @@ sudo scat --help
 
 ## 常用操作
 
+交互菜单支持方向键或 `j/k` 选择、Enter 确认、Esc 返回，也可以直接按数字键。
+
 ```bash
 # 打开交互式管理菜单
 sudo scat

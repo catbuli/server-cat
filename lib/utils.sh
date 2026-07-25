@@ -163,28 +163,167 @@ restart_ssh_service() {
     systemctl restart ssh 2>/dev/null
 }
 
-# 显示菜单
+server_cat_menu_render() {
+    local title="$1"
+    local color="$2"
+    local zero_text="$3"
+    local description="$4"
+    local selected="$5"
+    local interactive="$6"
+    local index=0
+    local label
+    shift 6
+
+    if [[ "$interactive" -eq 1 ]] || [[ -t 2 ]]; then
+        clear_screen >&2
+    fi
+    echo -e "${color}=====================================${NC}" >&2
+    echo -e "${color}    $title${NC}" >&2
+    echo -e "${color}=====================================${NC}" >&2
+
+    if [[ -n "$description" ]]; then
+        printf '%s\n\n' "$description" >&2
+    fi
+
+    for label in "$@"; do
+        if [[ "$selected" -eq "$index" ]]; then
+            echo -e "${CYAN}> $((index + 1)). $label${NC}" >&2
+        else
+            printf '  %d. %s\n' "$((index + 1))" "$label" >&2
+        fi
+        index=$((index + 1))
+    done
+
+    if [[ "$selected" -eq "$index" ]]; then
+        echo -e "${CYAN}> 0. $zero_text${NC}" >&2
+    else
+        printf '  0. %s\n' "$zero_text" >&2
+    fi
+    echo -e "${color}-------------------------------------${NC}" >&2
+
+    if [[ "$interactive" -eq 1 ]]; then
+        printf '↑/↓ 或 j/k 选择，Enter 确认，Esc 返回；数字键可直接选择\n' >&2
+    fi
+}
+
+select_menu() {
+    local title="$1"
+    local color="$2"
+    local zero_text="${3:-返回}"
+    local description="$4"
+    local item_count
+    local selected=0
+    local choice
+    local key
+    local sequence
+    local direction
+    local escape_timeout="1"
+    local interactive=0
+    local -a items
+    shift 4
+    items=("$@")
+    item_count=${#items[@]}
+
+    if [[ "${SERVER_CAT_MENU_DEFAULT_ZERO:-0}" -eq 1 ]]; then
+        selected="$item_count"
+    fi
+
+    if [[ "${BASH_VERSINFO[0]}" -ge 4 ]]; then
+        escape_timeout="0.2"
+    fi
+
+    if [[ "${SERVER_CAT_MENU_FORCE_INTERACTIVE:-0}" -eq 1 ]] ||
+        { [[ -t 0 ]] && [[ -t 2 ]]; }; then
+        interactive=1
+    fi
+
+    if [[ "$interactive" -eq 0 ]]; then
+        while true; do
+            server_cat_menu_render "$title" "$color" "$zero_text" "$description" -1 0 "${items[@]}"
+            if ! read -r -p "请输入你的选择 [0-$item_count]: " choice; then
+                printf '0\n'
+                return 0
+            fi
+            if is_number "$choice" && [[ "$choice" -ge 0 && "$choice" -le "$item_count" ]]; then
+                printf '%s\n' "$choice"
+                return 0
+            fi
+            print_error "无效输入，请重试" >&2
+        done
+    fi
+
+    while true; do
+        server_cat_menu_render "$title" "$color" "$zero_text" "$description" "$selected" 1 "${items[@]}"
+        if ! IFS= read -r -s -n 1 key; then
+            printf '0\n'
+            return 0
+        fi
+
+        direction=""
+        case "$key" in
+            "")
+                if [[ "$selected" -eq "$item_count" ]]; then
+                    printf '0\n'
+                else
+                    printf '%s\n' "$((selected + 1))"
+                fi
+                return 0
+                ;;
+            j|J) direction="down" ;;
+            k|K) direction="up" ;;
+            q|Q|0)
+                printf '0\n'
+                return 0
+                ;;
+            [1-9])
+                if [[ "$key" -le "$item_count" ]]; then
+                    printf '%s\n' "$key"
+                    return 0
+                fi
+                ;;
+            $'\033')
+                sequence=""
+                if ! IFS= read -r -s -n 1 -t "$escape_timeout" sequence; then
+                    printf '0\n'
+                    return 0
+                fi
+                if [[ "$sequence" == "[" || "$sequence" == "O" ]]; then
+                    if ! IFS= read -r -s -n 1 -t "$escape_timeout" sequence; then
+                        continue
+                    fi
+                    case "$sequence" in
+                        A) direction="up" ;;
+                        B) direction="down" ;;
+                    esac
+                fi
+                ;;
+        esac
+
+        case "$direction" in
+            up)
+                if [[ "$selected" -eq 0 ]]; then
+                    selected="$item_count"
+                else
+                    selected=$((selected - 1))
+                fi
+                ;;
+            down)
+                if [[ "$selected" -eq "$item_count" ]]; then
+                    selected=0
+                else
+                    selected=$((selected + 1))
+                fi
+                ;;
+        esac
+    done
+}
+
+# 兼容现有主菜单调用方式。
 show_menu() {
     local title="$1"
     local color="$2"
     local zero_text="${3:-返回}"
     shift 3
 
-    clear_screen >&2
-    echo -e "${color}=====================================${NC}" >&2
-    echo -e "${color}    $title${NC}" >&2
-    echo -e "${color}=====================================${NC}" >&2
-
-    local i=1
-    while [[ $# -gt 0 ]]; do
-        echo "$i. $1" >&2
-        shift
-        ((i++))
-    done
-
-    echo "0. $zero_text" >&2
-    echo -e "${color}-------------------------------------${NC}" >&2
-    read -p "请输入你的选择 [0-$((i-1))]: " choice
-
-    echo "$choice"
+    select_menu "$title" "$color" "$zero_text" "" "$@"
 }

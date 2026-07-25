@@ -108,20 +108,19 @@ server_cat_cleanup_docker_build_cache() {
 }
 
 server_cat_cleanup_menu() {
+    local choice
+
     while true; do
-        clear_screen
-        echo -e "${BLUE}=====================================${NC}"
-        echo -e "${BLUE}    🧹 清理系统空间                 ${NC}"
-        echo -e "${BLUE}=====================================${NC}"
-        echo "1. 查看临时文件与 Docker 空间占用"
-        echo "2. 清理系统临时文件"
-        echo "3. 清理 Docker 已停止容器"
-        echo "4. 清理 Docker 悬空镜像"
-        echo "5. 清理 Docker 构建缓存"
-        echo "0. 返回系统设置"
-        echo -e "${BLUE}-------------------------------------${NC}"
-        print_info "不会清理 Docker 卷、运行中的容器、已命名镜像、业务目录或备份"
-        read -p "请输入你的选择 [0-5]: " choice
+        choice=$(select_menu \
+            "🧹 清理系统空间" \
+            "$BLUE" \
+            "返回系统设置" \
+            "不会清理 Docker 卷、运行中的容器、已命名镜像、业务目录或备份" \
+            "查看临时文件与 Docker 空间占用" \
+            "清理系统临时文件" \
+            "清理 Docker 已停止容器" \
+            "清理 Docker 悬空镜像" \
+            "清理 Docker 构建缓存")
 
         case "$choice" in
             1)

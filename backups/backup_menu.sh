@@ -10,19 +10,17 @@ source "$BACKUPS_DIR/../lib/backup_tools.sh"
 source "$BACKUPS_DIR/restore_backup.sh"
 
 function backup_menu() {
+    local choice
+
     init_backup_dirs
 
     while true; do
-        clear_screen
-        echo -e "${BLUE}=====================================${NC}"
-        echo -e "${BLUE}    💾 备份与恢复                 ${NC}"
-        echo -e "${BLUE}=====================================${NC}"
-        echo "1. 创建备份"
-        echo "2. 查看备份列表"
-        echo "3. 从备份恢复"
-        echo "0. 返回主菜单"
-        echo -e "${BLUE}-------------------------------------${NC}"
-        read -p "请输入你的选择 [0-3]: " choice
+        choice=$(select_menu \
+            "💾 备份与恢复" \
+            "$BLUE" \
+            "返回主菜单" \
+            "" \
+            "创建备份" "查看备份列表" "从备份恢复")
 
         case $choice in
             1)

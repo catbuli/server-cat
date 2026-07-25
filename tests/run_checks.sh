@@ -123,6 +123,41 @@ check_utils_behavior() {
     rm -f "$clear_error"
 }
 
+check_menu_selector_behavior() {
+    if bash -c '
+        source "$1/lib/utils.sh"
+        export SERVER_CAT_MENU_FORCE_INTERACTIVE=1
+
+        choice=$(printf "\033[B\n" | select_menu "测试菜单" "$BLUE" "返回" "" "第一项" "第二项" 2> /dev/null)
+        [[ "$choice" == "2" ]] || exit 1
+
+        choice=$(printf "\033[A\n" | select_menu "测试菜单" "$BLUE" "返回" "" "第一项" "第二项" 2> /dev/null)
+        [[ "$choice" == "0" ]] || exit 1
+
+        choice=$(printf "j\n" | select_menu "测试菜单" "$BLUE" "返回" "" "第一项" "第二项" 2> /dev/null)
+        [[ "$choice" == "2" ]] || exit 1
+
+        choice=$(printf "2" | select_menu "测试菜单" "$BLUE" "返回" "" "第一项" "第二项" 2> /dev/null)
+        [[ "$choice" == "2" ]] || exit 1
+
+        choice=$(printf "\033" | select_menu "测试菜单" "$BLUE" "返回" "" "第一项" "第二项" 2> /dev/null)
+        [[ "$choice" == "0" ]] || exit 1
+
+        export SERVER_CAT_MENU_DEFAULT_ZERO=1
+        choice=$(printf "\n" | select_menu "测试菜单" "$BLUE" "返回" "" "第一项" "第二项" 2> /dev/null)
+        [[ "$choice" == "0" ]] || exit 1
+        unset SERVER_CAT_MENU_DEFAULT_ZERO
+
+        unset SERVER_CAT_MENU_FORCE_INTERACTIVE
+        choice=$(printf "x\n2\n" | select_menu "测试菜单" "$BLUE" "返回" "" "第一项" "第二项" 2> /dev/null)
+        [[ "$choice" == "2" ]]
+    ' _ "$PROJECT_ROOT"; then
+        pass "公共菜单支持方向键、j/k、Enter、Esc 与数字输入降级"
+    else
+        fail "公共菜单支持方向键、j/k、Enter、Esc 与数字输入降级"
+    fi
+}
+
 check_agent_command_behavior() {
     if bash -c 'source "$1/lib/utils.sh"; source "$1/lib/agent.sh"; SERVER_CAT_AGENT_BINARY=/usr/bin/true; server_cat_agent_dispatch check' _ "$PROJECT_ROOT"; then
         pass "Agent 子命令通过独立分发层执行"
@@ -399,6 +434,7 @@ check_syntax \
 check_menu_metadata
 check_source_safety
 check_utils_behavior
+check_menu_selector_behavior
 check_agent_command_behavior
 check_agent_config_behavior
 check_release_behavior
@@ -449,6 +485,12 @@ assert_contains "backups/restore_backup.sh" 'restart_ssh_service' "SSH 恢复复
 assert_contains_literal "main.sh" 'is_number "$choice"' "菜单在数值比较前校验输入"
 assert_contains_literal "main.sh" 'call_menu_func "$func"' "菜单通过安全调用器执行功能"
 assert_contains_literal "lib/utils.sh" 'clear_screen' "菜单使用兼容未知终端的清屏函数"
+assert_contains_literal "main.sh" 'select_menu "$icon $title"' "软件与设置菜单使用公共选择器"
+assert_contains_literal "main.sh" 'select_menu "⚙️  系统设置"' "系统设置菜单使用公共选择器"
+assert_contains_literal "lib/agent_config.sh" 'choice=$(select_menu' "Agent 菜单使用公共选择器"
+assert_contains_literal "lib/cleanup.sh" 'choice=$(select_menu' "空间清理菜单使用公共选择器"
+assert_contains_literal "backups/backup_menu.sh" 'choice=$(select_menu' "备份菜单使用公共选择器"
+assert_contains_literal "backups/restore_backup.sh" 'choice=$(select_menu' "恢复菜单使用公共选择器"
 assert_contains "backups/restore_backup.sh" 'get_real_home' "恢复用户数据使用实际用户主目录"
 assert_contains_literal "backups/restore_backup.sh" 'fail_count=$((fail_count + 1))' "全部恢复会汇总子项失败"
 assert_contains "modules/init_user_dirs.sh" 'get_real_home' "用户目录初始化使用实际用户主目录"
