@@ -3,12 +3,10 @@
 MENU_NAME="Certbot (SSL证书)"
 MENU_FUNC="install_certbot"
 ROLLBACK_FUNC="rollback_certbot"
-BACKUP_FUNC="backup_certbot"
 PRIORITY=30
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &> /dev/null && pwd)"
 source "$SCRIPT_DIR/../lib/utils.sh"
-source "$SCRIPT_DIR/../lib/backup_tools.sh"
 source "$SCRIPT_DIR/../modules/certbot_renew.sh"
 
 function install_certbot() {
@@ -107,12 +105,6 @@ function rollback_certbot() {
     else
         print_warning "已取消卸载"
     fi
-}
-
-function backup_certbot() {
-    local temp_dir="$1"
-
-    backup_dir "/etc/letsencrypt" "$temp_dir"
 }
 
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then

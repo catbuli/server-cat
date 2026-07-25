@@ -6,7 +6,6 @@ SCRIPT_SOURCE="$(readlink -f "${BASH_SOURCE[0]}")"
 SCRIPT_DIR="$( cd "$( dirname "$SCRIPT_SOURCE" )" &> /dev/null && pwd )"
 SOFTWARE_DIR="$SCRIPT_DIR/softwares"
 MODULES_DIR="$SCRIPT_DIR/modules"
-BACKUPS_DIR="$SCRIPT_DIR/backups"
 CONFIGS_DIR="$SCRIPT_DIR/configs"
 
 source "$SCRIPT_DIR/lib/utils.sh"
@@ -95,7 +94,6 @@ function dispatch_command() {
 function setup_permissions() {
     chmod +x "$SCRIPT_DIR"/modules/*.sh 2>/dev/null || true
     chmod +x "$SCRIPT_DIR"/softwares/*.sh 2>/dev/null || true
-    chmod +x "$SCRIPT_DIR"/backups/*.sh 2>/dev/null || true
     chmod +x "$SCRIPT_DIR"/configs/*.sh 2>/dev/null || true
 }
 
@@ -223,7 +221,6 @@ function show_generic_menu() {
     local action_verb="$4"
     local all_verb="$5"
     local empty_msg="$6"
-    local submenu_func="$7"
     local choice
 
     declare -a menu_funcs menu_names menu_priorities
@@ -279,9 +276,7 @@ function show_generic_menu() {
             local name="${item_names[$idx]}"
             print_step "正在$action_verb: $name"
 
-            if [[ -n "$submenu_func" ]] && [[ "$func" == "$submenu_func" ]]; then
-                call_menu_func "$func"
-            elif call_menu_func "$func"; then
+            if call_menu_func "$func"; then
                 print_success "✓ $name ${action_verb}成功"
             else
                 print_error "✗ $name ${action_verb}失败"
@@ -311,8 +306,7 @@ function show_settings_menu() {
         "$MODULES_DIR" \
         "执行" \
         "全部设置" \
-        "在 'modules' 目录中没有找到配置模块" \
-        "backup_menu"
+        "在 'modules' 目录中没有找到配置模块"
 }
 
 function show_configs_menu() {
@@ -351,12 +345,6 @@ function show_configs_menu() {
             sleep 2
         fi
     done
-}
-
-function show_backup_menu() {
-    # 调用备份系统的独立菜单
-    source "$BACKUPS_DIR/backup_menu.sh"
-    backup_menu
 }
 
 function show_server_cat_uninstall() {
@@ -485,14 +473,13 @@ function main_menu() {
             "Ubuntu / Debian 服务器管理工具" \
             "${GREEN}" \
             "退出" \
-            "常用软件" "常用设置" "数据备份" "系统设置" "卸载与恢复")
+            "常用软件" "常用设置" "系统设置" "卸载与恢复")
 
         case $choice in
             1) show_software_menu ;;
             2) show_settings_menu ;;
-            3) show_backup_menu ;;
-            4) show_configs_menu ;;
-            5) show_uninstall_menu ;;
+            3) show_configs_menu ;;
+            4) show_uninstall_menu ;;
             0) echo ""; print_success "👋 感谢使用，再见！"; exit 0 ;;
             *) print_error "无效输入，请重试"; sleep 2 ;;
         esac

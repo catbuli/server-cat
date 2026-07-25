@@ -54,6 +54,17 @@ assert_contains_literal() {
     fi
 }
 
+assert_not_exists() {
+    local path="$1"
+    local description="$2"
+
+    if [[ -e "$PROJECT_ROOT/$path" ]]; then
+        fail "$description"
+    else
+        pass "$description"
+    fi
+}
+
 check_syntax() {
     if bash -n "$@"; then
         pass "全部 Bash 脚本语法有效"
@@ -90,7 +101,7 @@ check_menu_metadata() {
 check_source_safety() {
     local script
 
-    for script in backups/backup_menu.sh backups/create_backup.sh backups/restore_backup.sh lib/uninstall.sh; do
+    for script in lib/uninstall.sh; do
         if bash -c 'set +e; source "$1"; case "$-" in *e*) exit 1 ;; *) exit 0 ;; esac' _ "$PROJECT_ROOT/$script"; then
             pass "$script source 后不启用 errexit"
         else
@@ -547,7 +558,6 @@ check_syntax \
     "$PROJECT_ROOT"/modules/*.sh \
     "$PROJECT_ROOT"/softwares/*.sh \
     "$PROJECT_ROOT"/configs/*.sh \
-    "$PROJECT_ROOT"/backups/*.sh \
     "$PROJECT_ROOT"/scripts/*.sh
 check_menu_metadata
 check_source_safety
@@ -593,7 +603,19 @@ assert_contains_literal "main.sh" 'server_cat_agent_dispatch "${@:2}"' "主入�
 assert_contains_literal "packaging/install.sh" 'for command_name in scat server-cat' "首次安装提供 scat 与兼容命令"
 assert_contains_literal "lib/release.sh" 'for command_name in scat server-cat' "更新安装提供 scat 与兼容命令"
 assert_contains_literal "scripts/build-release.sh" 'packaging/completions/scat.bash' "发布包包含 scat 补全规则"
-assert_contains_literal "scripts/build-release.sh" 'main.sh lib configs templates backups modules softwares scripts' "发布包包含运行配置模板"
+assert_contains_literal "scripts/build-release.sh" 'main.sh lib configs templates modules softwares scripts' "发布包包含运行配置模板"
+assert_not_exists "backups" "项目不再包含备份与恢复子系统"
+assert_not_exists "lib/backup_tools.sh" "项目不再包含备份归档工具"
+assert_not_contains "main.sh" '数据备份' "主菜单不再提供数据备份入口"
+assert_not_contains "main.sh" 'show_backup_menu' "主入口不再加载备份菜单"
+assert_contains_literal "main.sh" '"常用软件" "常用设置" "系统设置" "卸载与恢复"' "主菜单删除备份后保持四个有效入口"
+assert_not_contains "lib/utils.sh" 'get_backup_func' "公共工具不再解析备份钩子"
+assert_not_contains "modules/init_user_dirs.sh" 'BACKUP_FUNC' "用户目录模块不再声明备份钩子"
+assert_not_contains "modules/certbot_renew.sh" 'BACKUP_FUNC' "证书续期模块不再声明备份钩子"
+assert_not_contains "modules/ssh_config.sh" 'BACKUP_FUNC' "SSH 模块不再声明备份钩子"
+assert_not_contains "softwares/install_docker.sh" 'BACKUP_FUNC' "Docker 模块不再声明备份钩子"
+assert_not_contains "softwares/install_nginx.sh" 'BACKUP_FUNC' "Nginx 模块不再声明备份钩子"
+assert_not_contains "softwares/install_certbot.sh" 'BACKUP_FUNC' "Certbot 模块不再声明备份钩子"
 assert_contains_literal "packaging/install.sh" 'bash-completion' "首次安装部署 Bash 补全"
 assert_contains_literal "lib/release.sh" 'bash-completion' "更新安装部署 Bash 补全"
 assert_contains_literal "packaging/install.sh" 'templates/agent.toml.example' "首次安装从模板创建 Agent 配置"
@@ -604,9 +626,7 @@ assert_not_contains "packaging/systemd/server-cat-agent.service" 'EnvironmentFil
 assert_contains_literal "templates/agent.toml.example" 'smtp_host = ""' "Agent 模板包含 SMTP 配置"
 assert_contains_literal "lib/release.sh" 'gpgv --keyring' "更新检查使用独立公钥验证签名"
 assert_contains_literal "lib/release.sh" "--proto '=https'" "更新检查仅允许 HTTPS 发布源"
-assert_contains "lib/backup_tools.sh" 'get_real_home' "默认备份目录使用实际用户主目录"
 assert_contains "modules/ssh_config.sh" 'restart_ssh_service' "SSH 配置复用服务重启回退"
-assert_contains "backups/restore_backup.sh" 'restart_ssh_service' "SSH 恢复复用服务重启回退"
 assert_contains_literal "main.sh" 'is_number "$choice"' "菜单在数值比较前校验输入"
 assert_contains_literal "main.sh" 'call_menu_func "$func"' "菜单通过安全调用器执行功能"
 assert_contains_literal "lib/utils.sh" 'clear_screen' "菜单使用兼容未知终端的清屏函数"
@@ -614,10 +634,6 @@ assert_contains_literal "main.sh" 'select_menu "$icon $title"' "软件与设置�
 assert_contains_literal "main.sh" 'select_menu "⚙️  系统设置"' "系统设置菜单使用公共选择器"
 assert_contains_literal "lib/agent_config.sh" 'choice=$(select_menu' "Agent 菜单使用公共选择器"
 assert_contains_literal "lib/cleanup.sh" 'choice=$(select_menu' "空间清理菜单使用公共选择器"
-assert_contains_literal "backups/backup_menu.sh" 'choice=$(select_menu' "备份菜单使用公共选择器"
-assert_contains_literal "backups/restore_backup.sh" 'choice=$(select_menu' "恢复菜单使用公共选择器"
-assert_contains "backups/restore_backup.sh" 'get_real_home' "恢复用户数据使用实际用户主目录"
-assert_contains_literal "backups/restore_backup.sh" 'fail_count=$((fail_count + 1))' "全部恢复会汇总子项失败"
 assert_contains "modules/init_user_dirs.sh" 'get_real_home' "用户目录初始化使用实际用户主目录"
 assert_contains "modules/certbot_renew.sh" 'get_real_home' "证书续期使用实际用户主目录"
 printf '\n检查完成：%s 项，失败 %s 项。\n' "$CHECK_COUNT" "$FAIL_COUNT"

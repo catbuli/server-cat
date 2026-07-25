@@ -78,10 +78,6 @@ call_menu_func() {
     "$func"
 }
 
-get_backup_func() {
-    get_script_var "$1" "BACKUP_FUNC"
-}
-
 get_priority() {
     local val=$(get_script_var "$1" "PRIORITY" "50")
     echo "${val:-50}"

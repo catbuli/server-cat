@@ -3,12 +3,10 @@
 MENU_NAME="Certbot 自动续期"
 MENU_FUNC="setup_certbot_renew"
 ROLLBACK_FUNC="rollback_certbot_renew"
-BACKUP_FUNC="backup_certbot_renew"
 PRIORITY=85
 
 MODULES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &> /dev/null && pwd)"
 source "$MODULES_DIR/../lib/utils.sh"
-source "$MODULES_DIR/../lib/backup_tools.sh"
 
 function setup_certbot_renew() {
     local user_home="${HOME_DIR:-$(get_real_home)}"
@@ -76,16 +74,4 @@ function rollback_certbot_renew() {
     fi
 
     print_success "✅ 证书续期配置已恢复"
-}
-
-function backup_certbot_renew() {
-    local temp_dir="$1"
-    local user_home="${HOME_DIR:-$(get_real_home)}"
-
-    backup_file "$user_home/scripts/certbot-renew.sh" "$temp_dir"
-
-    if crontab -l 2>/dev/null | grep -q "certbot-renew.sh"; then
-        mkdir -p "$temp_dir"
-        crontab -l 2>/dev/null | grep "certbot-renew.sh" > "$temp_dir/crontab_entry.txt"
-    fi
 }

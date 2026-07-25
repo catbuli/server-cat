@@ -3,18 +3,16 @@
 MENU_NAME="初始化用户目录"
 MENU_FUNC="init_user_dirs"
 ROLLBACK_FUNC="rollback_init_user_dirs"
-BACKUP_FUNC="backup_user_dirs"
 PRIORITY=30
 
 MODULES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &> /dev/null && pwd)"
 source "$MODULES_DIR/../lib/utils.sh"
-source "$MODULES_DIR/../lib/backup_tools.sh"
 
 function init_user_dirs() {
     print_step "📁 初始化用户常用目录..."
 
     local user_home="${HOME_DIR:-$(get_real_home)}"
-    local dirs=("logs" "dockers" "configs" "scripts" "backups")
+    local dirs=("logs" "dockers" "configs" "scripts")
     local dir
     local full_path
 
@@ -77,14 +75,4 @@ function rollback_init_user_dirs() {
     else
         print_warning "已取消恢复"
     fi
-}
-
-function backup_user_dirs() {
-    local temp_dir="$1"
-    local user_home="${HOME_DIR:-$(get_real_home)}"
-
-    backup_dir "$user_home/logs" "$temp_dir"
-    backup_dir "$user_home/dockers" "$temp_dir"
-    backup_dir "$user_home/configs" "$temp_dir"
-    backup_dir "$user_home/scripts" "$temp_dir"
 }

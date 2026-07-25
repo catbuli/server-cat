@@ -3,13 +3,11 @@
 MENU_NAME="Docker"
 MENU_FUNC="install_docker"
 ROLLBACK_FUNC="rollback_docker"
-BACKUP_FUNC="backup_docker"
 PRIORITY=10
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &> /dev/null && pwd)"
 source "$SCRIPT_DIR/../lib/utils.sh"
 source "$SCRIPT_DIR/../lib/platform.sh"
-source "$SCRIPT_DIR/../lib/backup_tools.sh"
 
 function install_docker() {
     local docker_distribution
@@ -136,18 +134,6 @@ function rollback_docker() {
     rm -rf /var/lib/containerd
 
     print_success "✅ Docker 已完全卸载"
-}
-
-function backup_docker() {
-    local temp_dir="$1"
-
-    backup_file "/etc/docker/daemon.json" "$temp_dir"
-
-    for compose_file in $HOME/dockers/*/docker-compose.yml $HOME/dockers/*/compose.yaml; do
-        [ -f "$compose_file" ] || continue
-        local compose_dir=$(dirname "$compose_dir")
-        backup_dir "$compose_dir" "$temp_dir/compose"
-    done
 }
 
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then

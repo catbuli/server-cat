@@ -3,12 +3,10 @@
 MENU_NAME="配置 SSH"
 MENU_FUNC="configure_ssh"
 ROLLBACK_FUNC="rollback_ssh_config"
-BACKUP_FUNC="backup_ssh_config"
 PRIORITY=20
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &> /dev/null && pwd)"
 source "$SCRIPT_DIR/../lib/utils.sh"
-source "$SCRIPT_DIR/../lib/backup_tools.sh"
 
 function configure_ssh() {
     print_step "▶️  配置 SSH 服务..."
@@ -133,16 +131,4 @@ function rollback_ssh_config() {
     else
         print_warning "已取消恢复"
     fi
-}
-
-function backup_ssh_config() {
-    local temp_dir="$1"
-
-    backup_file "/etc/ssh/sshd_config" "$temp_dir"
-
-    for backup in /etc/ssh/sshd_config.backup.*; do
-        [ -f "$backup" ] || continue
-        mkdir -p "$temp_dir/backups"
-        cp "$backup" "$temp_dir/backups/"
-    done
 }

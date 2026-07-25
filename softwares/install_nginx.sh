@@ -3,12 +3,10 @@
 MENU_NAME="Nginx"
 MENU_FUNC="install_nginx"
 ROLLBACK_FUNC="rollback_nginx"
-BACKUP_FUNC="backup_nginx"
 PRIORITY=20
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &> /dev/null && pwd)"
 source "$SCRIPT_DIR/../lib/utils.sh"
-source "$SCRIPT_DIR/../lib/backup_tools.sh"
 
 function install_nginx() {
     echo "======================================"
@@ -75,13 +73,6 @@ function rollback_nginx() {
     apt-get autoremove -y 2>/dev/null || true
 
     print_success "✅ Nginx 已卸载"
-}
-
-function backup_nginx() {
-    local temp_dir="$1"
-
-    backup_dir "/etc/nginx" "$temp_dir"
-    backup_dir "/var/www/html" "$temp_dir"
 }
 
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
