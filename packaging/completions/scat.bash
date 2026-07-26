@@ -16,7 +16,7 @@ _scat_completion() {
             ;;
         agent)
             if [[ "$COMP_CWORD" -eq 2 ]]; then
-                COMPREPLY=( $(compgen -W 'check enable disable status logs configure test-email test-telegram mute unmute' -- "$current_word") )
+                COMPREPLY=( $(compgen -W 'check enable disable status logs conf test-email test-telegram mute unmute' -- "$current_word") )
                 return 0
             fi
             if [[ "$subcommand" == "logs" && "$COMP_CWORD" -eq 3 ]]; then

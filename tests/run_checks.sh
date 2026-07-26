@@ -192,7 +192,8 @@ check_agent_command_behavior() {
         source "$1/lib/utils.sh"
         source "$1/lib/agent.sh"
         server_cat_agent_config_menu() { printf "%s\n" configured; }
-        [[ "$(server_cat_agent_dispatch configure)" == "configured" ]]
+        [[ "$(server_cat_agent_dispatch conf)" == "configured" ]] &&
+            ! server_cat_agent_dispatch configure > /dev/null 2>&1
     ' _ "$PROJECT_ROOT"; then
         pass "Agent 配置命令通过独立分发层执行"
     else
@@ -648,7 +649,7 @@ check_uninstall_behavior() {
 }
 
 check_completion_behavior() {
-    if bash -c 'source "$1"; COMP_WORDS=(scat agent ""); COMP_CWORD=2; _scat_completion; [[ " ${COMPREPLY[*]} " == *" check "* && " ${COMPREPLY[*]} " == *" status "* && " ${COMPREPLY[*]} " == *" logs "* && " ${COMPREPLY[*]} " == *" configure "* && " ${COMPREPLY[*]} " == *" test-email "* && " ${COMPREPLY[*]} " == *" test-telegram "* && " ${COMPREPLY[*]} " == *" mute "* && " ${COMPREPLY[*]} " == *" unmute "* ]]' _ "$PROJECT_ROOT/packaging/completions/scat.bash"; then
+    if bash -c 'source "$1"; COMP_WORDS=(scat agent ""); COMP_CWORD=2; _scat_completion; [[ " ${COMPREPLY[*]} " == *" check "* && " ${COMPREPLY[*]} " == *" status "* && " ${COMPREPLY[*]} " == *" logs "* && " ${COMPREPLY[*]} " == *" conf "* && " ${COMPREPLY[*]} " != *" configure "* && " ${COMPREPLY[*]} " == *" test-email "* && " ${COMPREPLY[*]} " == *" test-telegram "* && " ${COMPREPLY[*]} " == *" mute "* && " ${COMPREPLY[*]} " == *" unmute "* ]]' _ "$PROJECT_ROOT/packaging/completions/scat.bash"; then
         pass "scat 补全提供 Agent 子命令"
     else
         fail "scat 补全提供 Agent 子命令"
@@ -721,7 +722,8 @@ assert_contains_literal "lib/uninstall.sh" 'systemctl disable --now server-cat-a
 assert_contains_literal "lib/uninstall.sh" 'server_cat_uninstall_remove_directory "$install_root"' "自卸载删除 Server Cat 程序目录"
 assert_contains_literal "lib/uninstall.sh" '已保留配置目录' "自卸载默认保留配置和状态"
 assert_contains_literal "main.sh" 'scat doctor' "命令行提供运行环境检查"
-assert_contains_literal "main.sh" 'scat agent configure' "命令行提供 Agent 配置向导"
+assert_contains_literal "main.sh" 'scat agent conf' "命令行提供 Agent 配置向导"
+assert_not_contains "main.sh" 'scat agent configure' "命令行不再提供冗长的 Agent 配置命令"
 assert_contains_literal "main.sh" 'scat agent logs --follow' "命令行提供 Agent 巡检日志查看"
 assert_contains_literal "lib/agent_config.sh" '"查看巡检日志"' "Agent 菜单提供巡检日志查看"
 assert_contains_literal "main.sh" 'scat agent test-telegram' "命令行提供 Telegram 测试通知"

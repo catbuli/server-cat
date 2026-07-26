@@ -70,7 +70,7 @@ sudo scat doctor
 # 在“卸载与恢复”中卸载 Server Cat，或逐项恢复已有系统设置
 
 # 管理本地监控 Agent
-sudo scat agent configure
+sudo scat agent conf
 sudo scat agent check
 sudo scat agent enable
 sudo scat agent disable
@@ -85,7 +85,7 @@ sudo scat agent unmute
 
 ## 监控与通知
 
-Agent 默认不启用外部通知和定时运行。可从“系统设置 → 配置监控 Agent”或 `sudo scat agent configure` 配置巡检周期、资源阈值、额外巡检目标、邮件与 Telegram 通知。所有配置均保存到权限为 `0600` 的 `/etc/server-cat/agent.toml`，保存前会先校验，配置错误时不会覆盖原文件。
+Agent 默认不启用外部通知和定时运行。可从“系统设置 → 配置监控 Agent”或 `sudo scat agent conf` 配置巡检周期、资源阈值、额外巡检目标、邮件与 Telegram 通知。所有配置均保存到权限为 `0600` 的 `/etc/server-cat/agent.toml`，保存前会先校验，配置错误时不会覆盖原文件。
 
 ```toml
 [email]

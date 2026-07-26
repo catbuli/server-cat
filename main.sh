@@ -30,7 +30,7 @@ function show_command_help() {
   sudo scat agent status          查看监控汇总状态
   sudo scat agent logs            查看最近 100 行巡检日志
   sudo scat agent logs --follow   持续查看巡检日志
-  sudo scat agent configure       打开 Agent 配置向导
+  sudo scat agent conf            打开 Agent 配置向导
   sudo scat agent test-email      发送 SMTP 测试邮件
   sudo scat agent test-telegram   发送 Telegram 测试通知
   sudo scat agent mute 30m        静默外部通知 30 分钟

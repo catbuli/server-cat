@@ -76,9 +76,9 @@ server_cat_agent_dispatch() {
             }
             server_cat_agent_logs "${2:-}"
             ;;
-        configure)
+        conf)
             [[ $# -eq 1 ]] || {
-                print_error "用法: scat agent configure"
+                print_error "用法: scat agent conf"
                 return 1
             }
             server_cat_agent_config_menu
