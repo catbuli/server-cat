@@ -4,7 +4,7 @@ Server Cat 是一个面向 Linux 服务器的本地管理工具，提供交互�
 
 ## 特性
 
-- 常用服务安装与维护：Docker、Nginx、Certbot、Bashtop
+- 常用服务安装与维护：Docker、Nginx、Certbot、Bashtop、Ncdu
 - 系统基础配置：SSH、防火墙、Sudo 用户、网络优化
 - 安全卸载与恢复：Server Cat 自身卸载和系统组件恢复分离，软件与配置仅允许逐项操作
 - 空间清理：按系统规则清理过期临时文件，按需清理 Docker 停止容器、悬空镜像和构建缓存
@@ -66,6 +66,8 @@ sudo scat doctor
 
 # 在“系统设置”中选择“清理系统空间”
 # 不会清理 Docker 卷、运行中的容器、已命名镜像、业务目录或备份
+
+# 在“常用软件”中安装 Ncdu，使用 ncdu / 交互分析磁盘占用
 
 # 在“卸载与恢复”中卸载 Server Cat，或逐项恢复已有系统设置
 

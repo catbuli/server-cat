@@ -758,6 +758,8 @@ assert_not_contains "softwares/install_certbot.sh" 'BACKUP_FUNC' "Certbot 模块
 assert_not_contains "softwares/install_certbot.sh" 'setup_certbot_renew' "Certbot 安装不再配置自定义续期任务"
 assert_not_contains "softwares/install_certbot.sh" 'crontab' "Certbot 安装不再修改用户 crontab"
 assert_contains_literal "softwares/install_certbot.sh" 'server_cat_certbot_verify_auto_renewal' "Certbot 安装后验证 Snap 自动续期任务"
+assert_contains_literal "softwares/install_ncdu.sh" 'apt-get install -y ncdu' "Ncdu 使用系统软件源安装"
+assert_contains_literal "softwares/install_ncdu.sh" 'apt-get remove -y ncdu' "Ncdu 支持单项卸载"
 assert_contains_literal "lib/doctor.sh" 'server_cat_doctor_check_certbot_renewal' "doctor 检查 Certbot 自动续期任务"
 assert_contains_literal "packaging/install.sh" 'bash-completion' "首次安装部署 Bash 补全"
 assert_contains_literal "lib/release.sh" 'bash-completion' "更新安装部署 Bash 补全"
