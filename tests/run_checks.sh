@@ -101,7 +101,7 @@ check_menu_metadata() {
 check_source_safety() {
     local script
 
-    for script in lib/certbot.sh lib/overview.sh lib/uninstall.sh; do
+    for script in lib/certbot.sh lib/overview.sh lib/services.sh lib/uninstall.sh; do
         if bash -c 'set +e; source "$1"; case "$-" in *e*) exit 1 ;; *) exit 0 ;; esac' _ "$PROJECT_ROOT/$script"; then
             pass "$script source 后不启用 errexit"
         else
@@ -370,6 +370,40 @@ check_overview_behavior() {
     fi
 
     rm -rf "$overview_root"
+}
+
+check_service_manager_behavior() {
+    if bash -c '
+        source "$1/lib/utils.sh"
+        source "$1/lib/services.sh"
+        systemctl() {
+            if [[ "$1" == "list-units" ]]; then
+                printf "nginx.service loaded active running Nginx\n"
+            elif [[ "$1" == "is-active" ]]; then
+                printf "active\n"
+            fi
+        }
+        select_menu() { printf "1\n"; }
+        server_cat_service_select running > /dev/null &&
+            [[ "$SERVER_CAT_SELECTED_SERVICE" == "nginx.service" ]]
+    ' _ "$PROJECT_ROOT"; then
+        pass "systemd 服务管理可筛选并选择单个服务"
+    else
+        fail "systemd 服务管理可筛选并选择单个服务"
+    fi
+
+    if bash -c '
+        source "$1/lib/utils.sh"
+        source "$1/lib/services.sh"
+        confirm() { return 0; }
+        systemctl() { [[ "$1 $2" == "restart nginx.service" ]]; }
+        server_cat_service_action restart nginx.service > /dev/null &&
+            ! server_cat_service_action restart "nginx;reboot.service" > /dev/null 2>&1
+    ' _ "$PROJECT_ROOT"; then
+        pass "systemd 服务变更需要确认并拒绝无效服务名"
+    else
+        fail "systemd 服务变更需要确认并拒绝无效服务名"
+    fi
 }
 
 check_release_behavior() {
@@ -790,6 +824,7 @@ check_menu_selector_behavior
 check_agent_command_behavior
 check_agent_config_behavior
 check_overview_behavior
+check_service_manager_behavior
 check_release_behavior
 check_legacy_layout_migration_behavior
 check_update_menu_behavior
@@ -809,6 +844,7 @@ assert_contains_literal "configs/check_update.sh" 'confirm "已完成更新验�
 assert_contains_literal "configs/doctor.sh" 'server_cat_doctor' "菜单提供运行环境检查"
 assert_contains_literal "configs/cleanup.sh" 'server_cat_cleanup_menu' "菜单提供空间清理"
 assert_contains_literal "configs/agent_config.sh" 'server_cat_agent_config_menu' "菜单提供 Agent 配置向导"
+assert_contains_literal "configs/service_manager.sh" 'server_cat_service_manager_menu' "菜单提供 systemd 服务管理"
 assert_contains_literal "main.sh" 'show_uninstall_menu' "主菜单区分 Server Cat 自卸载与单项恢复"
 assert_contains_literal "main.sh" 'show_component_rollback_menu' "系统组件仅允许逐项恢复或卸载"
 assert_not_contains "main.sh" 'ROLLBACK_BATCH_MODE' "卸载菜单不再批量执行全部回滚函数"
