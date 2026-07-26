@@ -459,6 +459,43 @@ check_firewall_behavior() {
     fi
 }
 
+check_ssh_key_behavior() {
+    local ssh_key_root
+    local authorized_keys
+
+    ssh_key_root=$(mktemp -d)
+    authorized_keys="$ssh_key_root/authorized_keys"
+    printf '%s\n' 'ssh-ed25519 AAAA first@example' 'ssh-ed25519 BBBB second@example' > "$authorized_keys"
+
+    if bash -c '
+        source "$1/modules/ssh_keys.sh"
+        ssh-keygen() { [[ "$1" == "-lf" ]]; }
+        server_cat_ssh_key_validate "ssh-ed25519 AAAA test@example" &&
+            ! server_cat_ssh_key_validate $'"'"'ssh-ed25519 AAAA test\nsecond'"'"'
+    ' _ "$PROJECT_ROOT"; then
+        pass "SSH 公钥管理使用 ssh-keygen 校验单行公钥"
+    else
+        fail "SSH 公钥管理使用 ssh-keygen 校验单行公钥"
+    fi
+
+    if bash -c '
+        source "$1/modules/ssh_keys.sh"
+        ssh-keygen() { printf "256 SHA256:test fingerprint (ED25519)\n"; }
+        select_menu() { printf "2\n"; }
+        confirm() { return 0; }
+        server_cat_ssh_key_remove "$2" "$(id -u)" "$(id -g)" > /dev/null &&
+            [[ "$(wc -l < "$2" | tr -d " ")" == "1" ]] &&
+            rg -q "first@example" "$2" &&
+            ! rg -q "second@example" "$2"
+    ' _ "$PROJECT_ROOT" "$authorized_keys"; then
+        pass "SSH 公钥管理每次只撤销选中的一条授权"
+    else
+        fail "SSH 公钥管理每次只撤销选中的一条授权"
+    fi
+
+    rm -rf "$ssh_key_root"
+}
+
 check_release_behavior() {
     if bash "$PROJECT_ROOT/tests/release_checks.sh"; then
         pass "签名发布源检查验证有效清单并拒绝路径穿越"
@@ -879,6 +916,7 @@ check_agent_config_behavior
 check_overview_behavior
 check_service_manager_behavior
 check_firewall_behavior
+check_ssh_key_behavior
 check_release_behavior
 check_legacy_layout_migration_behavior
 check_update_menu_behavior
@@ -938,6 +976,8 @@ assert_not_exists "modules/init_user_dirs.sh" "项目不再创建个人化用户
 assert_not_exists "modules/certbot_renew.sh" "项目不再维护自定义 Certbot 续期模块"
 assert_not_exists "scripts/certbot-renew.sh" "发布包不再携带自定义 Certbot 续期脚本"
 assert_not_contains "modules/ssh_config.sh" 'BACKUP_FUNC' "SSH 模块不再声明备份钩子"
+assert_contains_literal "modules/ssh_keys.sh" 'ssh-keygen -lf' "SSH 公钥写入前验证指纹"
+assert_not_contains "modules/ssh_keys.sh" 'private' "SSH 公钥管理不处理私钥"
 assert_not_contains "modules/firewall.sh" 'ufw allow ssh' "防火墙不再固定放行 22 端口"
 assert_not_contains "modules/firewall.sh" 'ufw allow http' "防火墙不再默认开放 HTTP"
 assert_contains_literal "modules/firewall.sh" 'ufw status numbered' "防火墙支持读取编号规则"
