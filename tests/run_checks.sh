@@ -540,6 +540,41 @@ check_system_identity_behavior() {
     fi
 }
 
+check_swap_behavior() {
+    local swap_root
+    local fstab_file
+
+    swap_root=$(mktemp -d)
+    fstab_file="$swap_root/fstab"
+    printf '%s\n' '/dev/root / ext4 defaults 0 1' "$swap_root/swapfile none swap sw 0 0" > "$fstab_file"
+
+    if SERVER_CAT_SWAP_FILE="$swap_root/swapfile" SERVER_CAT_FSTAB_FILE="$fstab_file" bash -c '
+        source "$1/modules/swap.sh"
+        server_cat_swap_update_fstab enable &&
+            [[ "$(rg -c "^[^#]*swapfile none swap sw 0 0$" "$2")" == "1" ]] &&
+            server_cat_swap_update_fstab disable &&
+            ! rg -q "swapfile" "$2" &&
+            rg -q "^/dev/root " "$2"
+    ' _ "$PROJECT_ROOT" "$fstab_file"; then
+        pass "Swap 管理原子更新 fstab 且不重复写入"
+    else
+        fail "Swap 管理原子更新 fstab 且不重复写入"
+    fi
+
+    if bash -c '
+        source "$1/modules/swap.sh"
+        server_cat_swap_size_valid 1 && server_cat_swap_size_valid 64 &&
+            ! server_cat_swap_size_valid 0 && ! server_cat_swap_size_valid 65 &&
+            ! server_cat_swap_size_valid 2G
+    ' _ "$PROJECT_ROOT"; then
+        pass "Swap 管理限制文件大小范围"
+    else
+        fail "Swap 管理限制文件大小范围"
+    fi
+
+    rm -rf "$swap_root"
+}
+
 check_release_behavior() {
     if bash "$PROJECT_ROOT/tests/release_checks.sh"; then
         pass "签名发布源检查验证有效清单并拒绝路径穿越"
@@ -962,6 +997,7 @@ check_service_manager_behavior
 check_firewall_behavior
 check_ssh_key_behavior
 check_system_identity_behavior
+check_swap_behavior
 check_release_behavior
 check_legacy_layout_migration_behavior
 check_update_menu_behavior
@@ -1025,6 +1061,10 @@ assert_contains_literal "modules/ssh_keys.sh" 'ssh-keygen -lf' "SSH 公钥写入
 assert_not_contains "modules/ssh_keys.sh" 'private' "SSH 公钥管理不处理私钥"
 assert_contains_literal "modules/system_identity.sh" 'timedatectl list-timezones' "基础系统设置使用系统时区列表"
 assert_contains_literal "modules/system_identity.sh" 'hostnamectl set-hostname' "基础系统设置通过 hostnamectl 修改主机名"
+assert_contains_literal "modules/swap.sh" 'confirm_strong "SWAP"' "Swap 创建或调整需要强确认"
+assert_contains_literal "modules/swap.sh" 'confirm_strong "REMOVE"' "Swap 删除需要强确认"
+assert_contains_literal "modules/swap.sh" 'truncate -s "${size_gib}G"' "Swap 调整后固定文件精确大小"
+assert_not_contains "modules/swap.sh" 'swapoff -a' "Swap 管理不批量停用其他交换空间"
 assert_not_contains "modules/firewall.sh" 'ufw allow ssh' "防火墙不再固定放行 22 端口"
 assert_not_contains "modules/firewall.sh" 'ufw allow http' "防火墙不再默认开放 HTTP"
 assert_contains_literal "modules/firewall.sh" 'ufw status numbered' "防火墙支持读取编号规则"
