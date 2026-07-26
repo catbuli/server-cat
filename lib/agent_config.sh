@@ -301,6 +301,147 @@ server_cat_agent_config_prompt_optional() {
     esac
 }
 
+server_cat_agent_config_list_contains() {
+    local needle="$1"
+    local candidate
+    shift
+
+    for candidate in "$@"; do
+        [[ "$candidate" == "$needle" ]] && return 0
+    done
+
+    return 1
+}
+
+server_cat_agent_config_select_docker_containers() {
+    local current="$1"
+    local docker_output
+    local name
+    local status
+    local item
+    local choice
+    local save_index
+    local select_all_index
+    local clear_index
+    local selected_value
+    local -a current_items
+    local -a container_names
+    local -a container_statuses
+    local -a menu_items
+    local -a selected_names
+    local -a updated_selected_names
+
+    IFS=',' read -r -a current_items <<< "$current"
+    for item in "${current_items[@]}"; do
+        item="${item#"${item%%[![:space:]]*}"}"
+        item="${item%"${item##*[![:space:]]}"}"
+        if [[ -n "$item" ]] &&
+            ! server_cat_agent_config_list_contains "$item" "${selected_names[@]}"; then
+            selected_names+=("$item")
+        fi
+    done
+
+    if ! command -v docker > /dev/null 2>&1; then
+        print_warning "未安装 Docker，保持原有 Docker 巡检配置"
+        SERVER_CAT_AGENT_CONFIG_VALUE="$current"
+        return 0
+    fi
+
+    if ! docker_output=$(docker ps -a --format '{{.Names}}\t{{.Status}}' 2>/dev/null); then
+        print_warning "无法连接 Docker 服务，保持原有 Docker 巡检配置"
+        SERVER_CAT_AGENT_CONFIG_VALUE="$current"
+        return 0
+    fi
+
+    while IFS=$'\t' read -r name status; do
+        [[ -n "$name" ]] || continue
+        container_names+=("$name")
+        container_statuses+=("${status:-状态未知}")
+    done <<< "$docker_output"
+
+    for item in "${current_items[@]}"; do
+        item="${item#"${item%%[![:space:]]*}"}"
+        item="${item%"${item##*[![:space:]]}"}"
+        if [[ -n "$item" ]] &&
+            ! server_cat_agent_config_list_contains "$item" "${container_names[@]}"; then
+            container_names+=("$item")
+            container_statuses+=("未发现")
+        fi
+    done
+
+    if [[ ${#container_names[@]} -eq 0 ]]; then
+        print_warning "Docker 中没有可选择的容器，保持原有 Docker 巡检配置"
+        SERVER_CAT_AGENT_CONFIG_VALUE="$current"
+        return 0
+    fi
+
+    while true; do
+        menu_items=()
+        for ((item = 0; item < ${#container_names[@]}; item++)); do
+            name="${container_names[$item]}"
+            if server_cat_agent_config_list_contains "$name" "${selected_names[@]}"; then
+                menu_items+=("[x] $name (${container_statuses[$item]})")
+            else
+                menu_items+=("[ ] $name (${container_statuses[$item]})")
+            fi
+        done
+        menu_items+=("全选容器" "清空选择" "保存选择")
+
+        select_all_index=$((${#container_names[@]} + 1))
+        clear_index=$((${#container_names[@]} + 2))
+        save_index=$((${#container_names[@]} + 3))
+        choice=$(select_menu \
+            "选择 Docker 巡检容器" \
+            "$BLUE" \
+            "取消并保持原配置" \
+            "选择容器后按 Enter 切换勾选，完成后选择保存。" \
+            "${menu_items[@]}")
+
+        if [[ "$choice" -eq 0 ]]; then
+            SERVER_CAT_AGENT_CONFIG_VALUE="$current"
+            print_info "已取消 Docker 容器选择，保持原配置"
+            return 0
+        fi
+
+        if [[ "$choice" -eq "$select_all_index" ]]; then
+            selected_names=("${container_names[@]}")
+            continue
+        fi
+
+        if [[ "$choice" -eq "$clear_index" ]]; then
+            selected_names=()
+            continue
+        fi
+
+        if [[ "$choice" -eq "$save_index" ]]; then
+            selected_value=""
+            for name in "${container_names[@]}"; do
+                server_cat_agent_config_list_contains "$name" "${selected_names[@]}" || continue
+                if [[ -n "$selected_value" ]]; then
+                    selected_value+=","
+                fi
+                selected_value+="$name"
+            done
+            SERVER_CAT_AGENT_CONFIG_VALUE="$selected_value"
+            print_success "已选择 ${#selected_names[@]} 个 Docker 容器"
+            return 0
+        fi
+
+        if [[ "$choice" -ge 1 ]] && [[ "$choice" -le ${#container_names[@]} ]]; then
+            name="${container_names[$((choice - 1))]}"
+            if server_cat_agent_config_list_contains "$name" "${selected_names[@]}"; then
+                updated_selected_names=()
+                for item in "${selected_names[@]}"; do
+                    [[ "$item" != "$name" ]] && updated_selected_names+=("$item")
+                done
+                selected_names=("${updated_selected_names[@]}")
+            else
+                selected_names+=("$name")
+            fi
+        fi
+    done
+}
+
 server_cat_agent_config_resources() {
     local staged_file
     local current
@@ -355,7 +496,7 @@ server_cat_agent_config_checks() {
     staged_file="$SERVER_CAT_AGENT_CONFIG_STAGED"
 
     print_step "配置额外巡检目标"
-    print_info "多个项目使用英文逗号分隔；留空保持原值，输入 - 清空。"
+    print_info "systemd、HTTP 和证书项目使用英文逗号分隔；Docker 容器通过菜单选择。"
 
     current=$(server_cat_agent_config_read "$staged_file" checks systemd_services)
     current=$(server_cat_agent_config_array_display "${current:-[]}")
@@ -375,7 +516,7 @@ server_cat_agent_config_checks() {
 
     current=$(server_cat_agent_config_read "$staged_file" checks docker_containers)
     current=$(server_cat_agent_config_array_display "${current:-[]}")
-    server_cat_agent_config_prompt_optional "Docker 容器" "$current"
+    server_cat_agent_config_select_docker_containers "$current"
     rendered=$(server_cat_agent_config_toml_array "$SERVER_CAT_AGENT_CONFIG_VALUE")
     server_cat_agent_config_set "$staged_file" checks docker_containers "$rendered" || return 1
 

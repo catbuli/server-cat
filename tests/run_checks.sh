@@ -248,6 +248,41 @@ check_agent_config_behavior() {
         fail "Agent 配置向导可安全更新字段并生成 TOML 数组"
     fi
 
+    if bash -c '
+        source "$1/lib/utils.sh"
+        source "$1/lib/agent_config.sh"
+        marker="$2/docker-menu-step"
+        docker() {
+            printf "web\tUp 2 hours (healthy)\nredis\tExited (0) 1 hour ago\n"
+        }
+        select_menu() {
+            if [[ ! -e "$marker" ]]; then
+                : > "$marker"
+                printf "1\n"
+            else
+                printf "5\n"
+            fi
+        }
+        server_cat_agent_config_select_docker_containers "redis" > /dev/null &&
+            [[ "$SERVER_CAT_AGENT_CONFIG_VALUE" == "web,redis" ]]
+    ' _ "$PROJECT_ROOT" "$config_root"; then
+        pass "Agent 配置向导可自动发现并多选 Docker 容器"
+    else
+        fail "Agent 配置向导可自动发现并多选 Docker 容器"
+    fi
+
+    if bash -c '
+        source "$1/lib/utils.sh"
+        source "$1/lib/agent_config.sh"
+        docker() { return 1; }
+        server_cat_agent_config_select_docker_containers "redis" > /dev/null &&
+            [[ "$SERVER_CAT_AGENT_CONFIG_VALUE" == "redis" ]]
+    ' _ "$PROJECT_ROOT"; then
+        pass "Docker 不可用时配置向导保持原巡检目标"
+    else
+        fail "Docker 不可用时配置向导保持原巡检目标"
+    fi
+
     config_mode=$(stat -c '%a' "$config_file" 2>/dev/null || stat -f '%Lp' "$config_file" 2>/dev/null)
     if [[ "$config_mode" == "600" ]]; then
         pass "Agent 配置向导保持配置权限为 0600"
