@@ -13,6 +13,7 @@ source "$SCRIPT_DIR/lib/platform.sh"
 source "$SCRIPT_DIR/lib/release.sh"
 source "$SCRIPT_DIR/lib/certbot.sh"
 source "$SCRIPT_DIR/lib/doctor.sh"
+source "$SCRIPT_DIR/lib/overview.sh"
 source "$SCRIPT_DIR/lib/agent.sh"
 source "$SCRIPT_DIR/lib/agent_config.sh"
 source "$SCRIPT_DIR/lib/uninstall.sh"
@@ -24,6 +25,7 @@ function show_command_help() {
   sudo scat update check          检查并验证 stable 发布版本
   sudo scat update apply          安装已验证的更新
   sudo scat doctor                检查 Server Cat 运行环境
+  sudo scat status                查看服务器概览
   sudo scat agent check           立即执行一次监控检查
   sudo scat agent enable          启用每分钟监控
   sudo scat agent disable         停止并禁用每分钟监控
@@ -83,6 +85,13 @@ function dispatch_command() {
                 return 1
             }
             server_cat_doctor
+            ;;
+        status)
+            [[ $# -eq 1 ]] || {
+                print_error "用法: scat status"
+                return 1
+            }
+            server_cat_overview
             ;;
         help|--help|-h)
             show_command_help
@@ -477,13 +486,14 @@ function main_menu() {
             "Ubuntu / Debian 服务器管理工具" \
             "${GREEN}" \
             "退出" \
-            "常用软件" "常用设置" "系统设置" "卸载与恢复")
+            "服务器概览" "常用软件" "常用设置" "系统设置" "卸载与恢复")
 
         case $choice in
-            1) show_software_menu ;;
-            2) show_settings_menu ;;
-            3) show_configs_menu ;;
-            4) show_uninstall_menu ;;
+            1) clear_screen; server_cat_overview; press_enter_to_continue ;;
+            2) show_software_menu ;;
+            3) show_settings_menu ;;
+            4) show_configs_menu ;;
+            5) show_uninstall_menu ;;
             0) echo ""; print_success "👋 感谢使用，再见！"; exit 0 ;;
             *) print_error "无效输入，请重试"; sleep 2 ;;
         esac

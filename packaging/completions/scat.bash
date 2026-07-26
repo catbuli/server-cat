@@ -3,7 +3,7 @@ _scat_completion() {
     local command="${COMP_WORDS[1]:-}"
     local subcommand="${COMP_WORDS[2]:-}"
     if [[ "$COMP_CWORD" -eq 1 ]]; then
-        COMPREPLY=( $(compgen -W 'update doctor agent help --help -h' -- "$current_word") )
+        COMPREPLY=( $(compgen -W 'status update doctor agent help --help -h' -- "$current_word") )
         return 0
     fi
 

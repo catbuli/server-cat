@@ -101,7 +101,7 @@ check_menu_metadata() {
 check_source_safety() {
     local script
 
-    for script in lib/certbot.sh lib/uninstall.sh; do
+    for script in lib/certbot.sh lib/overview.sh lib/uninstall.sh; do
         if bash -c 'set +e; source "$1"; case "$-" in *e*) exit 1 ;; *) exit 0 ;; esac' _ "$PROJECT_ROOT/$script"; then
             pass "$script source 后不启用 errexit"
         else
@@ -312,6 +312,64 @@ check_agent_config_behavior() {
     fi
 
     rm -rf "$config_root"
+}
+
+check_overview_behavior() {
+    local overview_root
+
+    overview_root=$(mktemp -d)
+    printf '%s\n' 'PRETTY_NAME="Test Linux"' > "$overview_root/os-release"
+    printf '%s\n' 'MemTotal: 2048000 kB' 'MemAvailable: 1024000 kB' 'SwapTotal: 0 kB' 'SwapFree: 0 kB' > "$overview_root/meminfo"
+    printf '%s\n' '0.10 0.20 0.30 1/100 42' > "$overview_root/loadavg"
+
+    if SERVER_CAT_OS_RELEASE_FILE="$overview_root/os-release" \
+        SERVER_CAT_MEMINFO_FILE="$overview_root/meminfo" \
+        SERVER_CAT_LOADAVG_FILE="$overview_root/loadavg" \
+        SERVER_CAT_REBOOT_REQUIRED_FILE="$overview_root/reboot-required" \
+        bash -c '
+            source "$1/lib/utils.sh"
+            source "$1/lib/overview.sh"
+            hostname() { [[ "$1" == "-I" ]] && printf "10.0.0.2 " || printf "test.example"; }
+            uptime() { printf "up 2 days"; }
+            nproc() { printf "4"; }
+            uname() { printf "6.8.0-test"; }
+            date() { printf "2026-07-26 12:00:00 CST"; }
+            df() {
+                if [[ "$1" == "-Pi" ]]; then
+                    printf "Filesystem Inodes IUsed IFree IUse%% Mounted\n/dev/test 1000 100 900 10%% /\n"
+                else
+                    printf "Filesystem Size Used Avail Use%% Mounted\n/dev/test 20G 5G 15G 25%% /\n"
+                fi
+            }
+            docker() {
+                case "$1 $2 $3" in
+                    "info  ") return 0 ;;
+                    "ps --quiet ") printf "one\n" ;;
+                    "ps --all --quiet") printf "one\ntwo\n" ;;
+                    "ps --filter health=unhealthy") printf "two\n" ;;
+                esac
+            }
+            systemctl() {
+                case "$1" in
+                    --failed) printf "failed.service loaded failed failed\n" ;;
+                    cat) return 0 ;;
+                    is-enabled) printf "enabled\n" ;;
+                    is-active) printf "active\n" ;;
+                esac
+            }
+            ss() { printf "tcp LISTEN\n"; }
+            output=$(server_cat_overview)
+            [[ "$output" == *"Test Linux"* ]] &&
+                [[ "$output" == *"50.0% (1000/2000 MiB)"* ]] &&
+                [[ "$output" == *"运行 1 / 总计 2，异常健康状态 1"* ]] &&
+                [[ "$output" == *"enabled (active)"* ]]
+        ' _ "$PROJECT_ROOT"; then
+        pass "服务器概览汇总系统、资源、Docker 与 Agent 状态"
+    else
+        fail "服务器概览汇总系统、资源、Docker 与 Agent 状态"
+    fi
+
+    rm -rf "$overview_root"
 }
 
 check_release_behavior() {
@@ -731,6 +789,7 @@ check_utils_behavior
 check_menu_selector_behavior
 check_agent_command_behavior
 check_agent_config_behavior
+check_overview_behavior
 check_release_behavior
 check_legacy_layout_migration_behavior
 check_update_menu_behavior
@@ -757,6 +816,8 @@ assert_contains_literal "lib/uninstall.sh" 'systemctl disable --now server-cat-a
 assert_contains_literal "lib/uninstall.sh" 'server_cat_uninstall_remove_directory "$install_root"' "自卸载删除 Server Cat 程序目录"
 assert_contains_literal "lib/uninstall.sh" '已保留配置目录' "自卸载默认保留配置和状态"
 assert_contains_literal "main.sh" 'scat doctor' "命令行提供运行环境检查"
+assert_contains_literal "main.sh" 'scat status' "命令行提供服务器概览"
+assert_contains_literal "main.sh" 'server_cat_overview' "主菜单提供服务器概览"
 assert_contains_literal "main.sh" 'scat agent conf' "命令行提供 Agent 配置向导"
 assert_not_contains "main.sh" 'scat agent configure' "命令行不再提供冗长的 Agent 配置命令"
 assert_contains_literal "main.sh" 'scat agent logs --follow' "命令行提供 Agent 巡检日志查看"
@@ -781,7 +842,7 @@ assert_not_exists "backups" "项目不再包含备份与恢复子系统"
 assert_not_exists "lib/backup_tools.sh" "项目不再包含备份归档工具"
 assert_not_contains "main.sh" '数据备份' "主菜单不再提供数据备份入口"
 assert_not_contains "main.sh" 'show_backup_menu' "主入口不再加载备份菜单"
-assert_contains_literal "main.sh" '"常用软件" "常用设置" "系统设置" "卸载与恢复"' "主菜单删除备份后保持四个有效入口"
+assert_contains_literal "main.sh" '"服务器概览" "常用软件" "常用设置" "系统设置" "卸载与恢复"' "主菜单提供五个有效入口"
 assert_not_contains "lib/utils.sh" 'get_backup_func' "公共工具不再解析备份钩子"
 assert_not_exists "modules/init_user_dirs.sh" "项目不再创建个人化用户目录"
 assert_not_exists "modules/certbot_renew.sh" "项目不再维护自定义 Certbot 续期模块"
