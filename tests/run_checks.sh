@@ -406,6 +406,59 @@ check_service_manager_behavior() {
     fi
 }
 
+check_firewall_behavior() {
+    if bash -c '
+        source "$1/modules/firewall.sh"
+        command() {
+            if [[ "$1 $2" == "-v sshd" ]]; then
+                printf "sshd\n"
+                return 0
+            fi
+            builtin command "$@"
+        }
+        sshd() { printf "port 2222\n"; }
+        [[ "$(server_cat_firewall_detect_ssh_ports)" == "2222" ]]
+    ' _ "$PROJECT_ROOT"; then
+        pass "防火墙启用前读取 SSH 实际端口"
+    else
+        fail "防火墙启用前读取 SSH 实际端口"
+    fi
+
+    if bash -c '
+        source "$1/modules/firewall.sh"
+        call_log="$2"
+        confirm() { return 0; }
+        ufw() { printf "%s\n" "$*" >> "$call_log"; }
+        server_cat_firewall_detect_ssh_ports() { printf "22022\n"; }
+        server_cat_firewall_enable > /dev/null &&
+            [[ "$(sed -n "1p" "$call_log")" == "allow 22022/tcp" ]] &&
+            rg -q "^--force enable$" "$call_log"
+    ' _ "$PROJECT_ROOT" "$PROJECT_ROOT/.firewall-test-calls"; then
+        pass "防火墙先放行实际 SSH 端口再启用"
+    else
+        fail "防火墙先放行实际 SSH 端口再启用"
+    fi
+    rm -f "$PROJECT_ROOT/.firewall-test-calls"
+
+    if bash -c '
+        source "$1/modules/firewall.sh"
+        select_menu() { printf "2\n"; }
+        confirm() { return 0; }
+        ufw() {
+            if [[ "$1 $2" == "status numbered" ]]; then
+                printf "[ 1] 22/tcp ALLOW IN Anywhere\n[ 7] 443/tcp ALLOW IN 10.0.0.0/8\n"
+            else
+                [[ "$*" == "--force delete 7" ]]
+            fi
+        }
+        server_cat_firewall_delete_rule > /dev/null
+    ' _ "$PROJECT_ROOT"; then
+        pass "防火墙可按当前编号删除单条规则"
+    else
+        fail "防火墙可按当前编号删除单条规则"
+    fi
+}
+
 check_release_behavior() {
     if bash "$PROJECT_ROOT/tests/release_checks.sh"; then
         pass "签名发布源检查验证有效清单并拒绝路径穿越"
@@ -825,6 +878,7 @@ check_agent_command_behavior
 check_agent_config_behavior
 check_overview_behavior
 check_service_manager_behavior
+check_firewall_behavior
 check_release_behavior
 check_legacy_layout_migration_behavior
 check_update_menu_behavior
@@ -884,6 +938,9 @@ assert_not_exists "modules/init_user_dirs.sh" "项目不再创建个人化用户
 assert_not_exists "modules/certbot_renew.sh" "项目不再维护自定义 Certbot 续期模块"
 assert_not_exists "scripts/certbot-renew.sh" "发布包不再携带自定义 Certbot 续期脚本"
 assert_not_contains "modules/ssh_config.sh" 'BACKUP_FUNC' "SSH 模块不再声明备份钩子"
+assert_not_contains "modules/firewall.sh" 'ufw allow ssh' "防火墙不再固定放行 22 端口"
+assert_not_contains "modules/firewall.sh" 'ufw allow http' "防火墙不再默认开放 HTTP"
+assert_contains_literal "modules/firewall.sh" 'ufw status numbered' "防火墙支持读取编号规则"
 assert_not_contains "softwares/install_docker.sh" 'BACKUP_FUNC' "Docker 模块不再声明备份钩子"
 assert_not_contains "softwares/install_nginx.sh" 'BACKUP_FUNC' "Nginx 模块不再声明备份钩子"
 assert_not_contains "softwares/install_certbot.sh" 'BACKUP_FUNC' "Certbot 模块不再声明备份钩子"
