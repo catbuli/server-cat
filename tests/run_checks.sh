@@ -496,6 +496,50 @@ check_ssh_key_behavior() {
     rm -rf "$ssh_key_root"
 }
 
+check_system_identity_behavior() {
+    if bash -c '
+        source "$1/modules/system_identity.sh"
+        server_cat_hostname_valid server-01.example.com &&
+            server_cat_hostname_valid localhost &&
+            ! server_cat_hostname_valid "-bad" &&
+            ! server_cat_hostname_valid "bad..name" &&
+            ! server_cat_hostname_valid "bad_name"
+    ' _ "$PROJECT_ROOT"; then
+        pass "基础系统设置严格校验主机名"
+    else
+        fail "基础系统设置严格校验主机名"
+    fi
+
+    if bash -c '
+        source "$1/modules/system_identity.sh"
+        timedatectl() {
+            if [[ "$1" == "list-timezones" ]]; then
+                printf "Asia/Shanghai\nAsia/Tokyo\nEurope/London\n"
+            else
+                [[ "$1 $2" == "set-timezone Asia/Shanghai" ]]
+            fi
+        }
+        select_menu() { printf "1\n"; }
+        confirm() { return 0; }
+        server_cat_system_identity_select_timezone <<< "Shanghai" > /dev/null
+    ' _ "$PROJECT_ROOT"; then
+        pass "基础系统设置从系统时区列表筛选后修改"
+    else
+        fail "基础系统设置从系统时区列表筛选后修改"
+    fi
+
+    if bash -c '
+        source "$1/modules/system_identity.sh"
+        confirm() { return 0; }
+        timedatectl() { [[ "$1 $2" == "set-ntp true" ]]; }
+        server_cat_system_identity_set_ntp true > /dev/null
+    ' _ "$PROJECT_ROOT"; then
+        pass "基础系统设置通过 timedatectl 管理 NTP"
+    else
+        fail "基础系统设置通过 timedatectl 管理 NTP"
+    fi
+}
+
 check_release_behavior() {
     if bash "$PROJECT_ROOT/tests/release_checks.sh"; then
         pass "签名发布源检查验证有效清单并拒绝路径穿越"
@@ -917,6 +961,7 @@ check_overview_behavior
 check_service_manager_behavior
 check_firewall_behavior
 check_ssh_key_behavior
+check_system_identity_behavior
 check_release_behavior
 check_legacy_layout_migration_behavior
 check_update_menu_behavior
@@ -978,6 +1023,8 @@ assert_not_exists "scripts/certbot-renew.sh" "发布包不再携带自定义 Cer
 assert_not_contains "modules/ssh_config.sh" 'BACKUP_FUNC' "SSH 模块不再声明备份钩子"
 assert_contains_literal "modules/ssh_keys.sh" 'ssh-keygen -lf' "SSH 公钥写入前验证指纹"
 assert_not_contains "modules/ssh_keys.sh" 'private' "SSH 公钥管理不处理私钥"
+assert_contains_literal "modules/system_identity.sh" 'timedatectl list-timezones' "基础系统设置使用系统时区列表"
+assert_contains_literal "modules/system_identity.sh" 'hostnamectl set-hostname' "基础系统设置通过 hostnamectl 修改主机名"
 assert_not_contains "modules/firewall.sh" 'ufw allow ssh' "防火墙不再固定放行 22 端口"
 assert_not_contains "modules/firewall.sh" 'ufw allow http' "防火墙不再默认开放 HTTP"
 assert_contains_literal "modules/firewall.sh" 'ufw status numbered' "防火墙支持读取编号规则"
