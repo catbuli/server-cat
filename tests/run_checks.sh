@@ -459,6 +459,18 @@ check_firewall_behavior() {
     fi
 }
 
+check_proxy_node_behavior() {
+    if bash -c '
+        source "$1/modules/proxy_node.sh"
+        command() { return 1; }
+        server_cat_proxy_check_docker && exit 1 || exit 0
+    ' _ "$PROJECT_ROOT"; then
+        pass "代理节点部署前检查 Docker 是否可用"
+    else
+        fail "代理节点部署前检查 Docker 是否可用"
+    fi
+}
+
 check_ssh_key_behavior() {
     local ssh_key_root
     local authorized_keys
@@ -995,6 +1007,7 @@ check_agent_config_behavior
 check_overview_behavior
 check_service_manager_behavior
 check_firewall_behavior
+check_proxy_node_behavior
 check_ssh_key_behavior
 check_system_identity_behavior
 check_swap_behavior

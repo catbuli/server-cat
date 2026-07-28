@@ -16,6 +16,79 @@ SERVER_CAT_PROXY_LINK_FILE="$SERVER_CAT_PROXY_XRAY_DIR/share-link.txt"
 SERVER_CAT_PROXY_CONTAINER="server-cat-xray"
 SERVER_CAT_PROXY_IMAGE="teddysun/xray:26.7.11"
 
+server_cat_proxy_check_docker() {
+    if ! command -v docker > /dev/null 2>&1; then
+        print_error "Docker 未安装，请先在「常用软件」中安装 Docker"
+        return 1
+    fi
+    if ! docker info > /dev/null 2>&1; then
+        print_error "Docker 守护进程未运行"
+        return 1
+    fi
+    return 0
+}
+
+server_cat_proxy_init_dirs() {
+    install -d -m 0755 "$SERVER_CAT_PROXY_DIR"
+    install -d -m 0755 "$SERVER_CAT_PROXY_XRAY_DIR"
+}
+
+server_cat_proxy_atomic_write() {
+    local target="$1"
+    local content="$2"
+    local mode="${3:-0600}"
+    local tmp
+
+    tmp=$(mktemp "$(dirname "$target")/.proxy.XXXXXX") || return 1
+    if ! printf '%s' "$content" > "$tmp"; then
+        rm -f "$tmp"
+        return 1
+    fi
+    chmod "$mode" "$tmp" || { rm -f "$tmp"; return 1; }
+    mv "$tmp" "$target"
+}
+
+server_cat_proxy_detect_public_ip() {
+    local ip
+
+    ip=$(curl -fsS --max-time 5 https://api.ipify.org 2>/dev/null || true)
+    if [[ -n "$ip" ]]; then
+        printf '%s\n' "$ip"
+        return 0
+    fi
+
+    ip=$(hostname -I 2>/dev/null | awk '{print $1}')
+    if [[ -n "$ip" ]]; then
+        printf '%s\n' "$ip"
+        return 0
+    fi
+
+    hostname 2>/dev/null
+}
+
+server_cat_proxy_config_exists() {
+    [[ -f "$SERVER_CAT_PROXY_CONFIG" ]]
+}
+
+# 确保空 config.json 存在；已有则保留
+server_cat_proxy_ensure_config() {
+    server_cat_proxy_init_dirs
+    if server_cat_proxy_config_exists; then
+        return 0
+    fi
+    server_cat_proxy_atomic_write "$SERVER_CAT_PROXY_CONFIG" \
+        '{"inbounds":[],"outbounds":[{"protocol":"freedom","tag":"direct"}]}'
+}
+
+server_cat_proxy_ensure_node_json() {
+    server_cat_proxy_init_dirs
+    if [[ -f "$SERVER_CAT_PROXY_NODE_JSON" ]]; then
+        return 0
+    fi
+    server_cat_proxy_atomic_write "$SERVER_CAT_PROXY_NODE_JSON" \
+        '{"reality":{"deployed":false},"hysteria2":{"deployed":false}}'
+}
+
 function configure_proxy_node() {
     local choice
 
