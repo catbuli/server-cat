@@ -39,6 +39,7 @@ server_cat_proxy_atomic_write() {
     local mode="${3:-0600}"
     local tmp
 
+    mkdir -p "$(dirname "$target")"
     tmp=$(mktemp "$(dirname "$target")/.proxy.XXXXXX") || return 1
     if ! printf '%s' "$content" > "$tmp"; then
         rm -f "$tmp"
@@ -215,13 +216,15 @@ server_cat_proxy_nodejson_set() {
 }
 
 # nodejson_get <proto> <field>，输出原始值（字符串无引号）
+# 注意：不能用 `// empty`，否则 false 布尔值会被当 falsy 丢弃
 server_cat_proxy_nodejson_get() {
     local proto="$1"
     local field="$2"
 
     [[ -f "$SERVER_CAT_PROXY_NODE_JSON" ]] || return 0
-    jq -r --arg p "$proto" --arg f "$field" '.[$p][$f] // empty' \
-        "$SERVER_CAT_PROXY_NODE_JSON" 2>/dev/null
+    jq -r --arg p "$proto" --arg f "$field" '
+        .[$p] | if has($f) then (.[$f] | if type == "boolean" then tostring else (. // "") end) else "" end
+    ' "$SERVER_CAT_PROXY_NODE_JSON" 2>/dev/null
 }
 
 # 等待容器 Running 且至少一个 inbound 端口在监听
@@ -351,6 +354,46 @@ server_cat_proxy_gen_reality_link() {
 
     printf 'vless://%s@%s:%s?encryption=none&flow=xtls-rprx-vision&security=reality&sni=%s&fp=chrome&pbk=%s&sid=%s&type=tcp&host=%s&headerType=none#SCat-Reality\n' \
         "$uuid" "$ip" "$port" "$host" "$pub" "$sid" "$host"
+}
+
+server_cat_proxy_gen_password() {
+    openssl rand -base64 24 2>/dev/null | tr -d '[:space:]'
+}
+
+# 参数: ip port serverName password
+server_cat_proxy_gen_hysteria2_link() {
+    local ip="$1" port="$2" sni="$3" pass="$4"
+
+    printf 'hysteria2://%s@%s:%s?sni=%s&insecure=0#SCat-Hysteria2\n' \
+        "$pass" "$ip" "$port" "$sni"
+}
+
+# 按 node.json 当前状态重新拼出所有已部署节点的链接并写回 share-link.txt
+server_cat_proxy_refresh_link_file() {
+    local links=""
+    local ip port dest uuid pub sid sni pass
+
+    ip=$(server_cat_proxy_detect_public_ip)
+
+    if [[ "$(server_cat_proxy_nodejson_get reality deployed)" == "true" ]]; then
+        port=$(server_cat_proxy_nodejson_get reality port)
+        dest=$(server_cat_proxy_nodejson_get reality dest)
+        uuid=$(server_cat_proxy_nodejson_get reality uuid)
+        pub=$(server_cat_proxy_nodejson_get reality publicKey)
+        sid=$(server_cat_proxy_nodejson_get reality shortIds | jq -r '.[0]' 2>/dev/null)
+        links+=$(server_cat_proxy_gen_reality_link "$ip" "$port" "$dest" "$uuid" "$pub" "$sid")
+        links+=$'\n'
+    fi
+
+    if [[ "$(server_cat_proxy_nodejson_get hysteria2 deployed)" == "true" ]]; then
+        port=$(server_cat_proxy_nodejson_get hysteria2 port)
+        sni=$(server_cat_proxy_nodejson_get hysteria2 serverName)
+        pass=$(server_cat_proxy_nodejson_get hysteria2 password)
+        links+=$(server_cat_proxy_gen_hysteria2_link "$ip" "$port" "$sni" "$pass")
+        links+=$'\n'
+    fi
+
+    server_cat_proxy_write_link_file "$links"
 }
 
 function configure_proxy_node() {
@@ -483,8 +526,60 @@ server_cat_proxy_deploy_reality() {
     printf '%s\n' "$link"
 }
 server_cat_proxy_deploy_hysteria2() { return 0; }
-server_cat_proxy_show() { return 0; }
-server_cat_proxy_remove_reality() { return 0; }
+server_cat_proxy_show() {
+    server_cat_proxy_ensure_node_json
+    print_step "已部署节点"
+
+    if [[ "$(server_cat_proxy_nodejson_get reality deployed)" == "true" ]]; then
+        print_info "VLESS + Reality"
+        printf '  %-12s %s\n' "端口:" "$(server_cat_proxy_nodejson_get reality port)"
+        printf '  %-12s %s\n' "伪装目标:" "$(server_cat_proxy_nodejson_get reality dest)"
+    else
+        print_info "VLESS + Reality：未部署"
+    fi
+
+    if [[ "$(server_cat_proxy_nodejson_get hysteria2 deployed)" == "true" ]]; then
+        print_info "Hysteria2"
+        printf '  %-12s %s\n' "端口:" "$(server_cat_proxy_nodejson_get hysteria2 port)"
+        printf '  %-12s %s\n' "SNI:" "$(server_cat_proxy_nodejson_get hysteria2 serverName)"
+    else
+        print_info "Hysteria2：未部署"
+    fi
+
+    if [[ "$(server_cat_proxy_nodejson_get reality deployed)" == "true" ]] || \
+       [[ "$(server_cat_proxy_nodejson_get hysteria2 deployed)" == "true" ]]; then
+        server_cat_proxy_refresh_link_file
+        print_step "分享链接"
+        cat "$SERVER_CAT_PROXY_LINK_FILE" 2>/dev/null
+        print_info "链接同时保存在 $SERVER_CAT_PROXY_LINK_FILE"
+    fi
+}
+
+server_cat_proxy_remove_reality() {
+    if [[ "$(server_cat_proxy_nodejson_get reality deployed)" != "true" ]]; then
+        print_warning "VLESS + Reality 节点未部署"
+        return 0
+    fi
+
+    print_warning "将卸载 VLESS + Reality 节点并从 config.json 移除对应 inbound"
+    confirm_strong "REMOVE" "确认卸载 Reality 节点" || {
+        print_info "已取消"
+        return 0
+    }
+
+    server_cat_proxy_inbound_remove scat-reality
+
+    if [[ "$(server_cat_proxy_inbound_count)" -gt 0 ]]; then
+        server_cat_proxy_rebuild_container
+    else
+        docker stop "$SERVER_CAT_PROXY_CONTAINER" > /dev/null 2>&1 || true
+        docker rm -f "$SERVER_CAT_PROXY_CONTAINER" > /dev/null 2>&1 || true
+    fi
+
+    server_cat_proxy_nodejson_set reality deployed false
+    server_cat_proxy_refresh_link_file
+    print_success "VLESS + Reality 节点已卸载"
+}
 server_cat_proxy_remove_hysteria2() { return 0; }
 
 rollback_proxy_node() {

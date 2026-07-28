@@ -581,6 +581,29 @@ check_proxy_node_behavior() {
     else
         fail "Reality 部署串联配置写入与容器重建"
     fi
+
+    if bash -c '
+        source "$1/modules/proxy_node.sh"
+        export SERVER_CAT_PROXY_DIR="$2"
+        SERVER_CAT_PROXY_XRAY_DIR="$SERVER_CAT_PROXY_DIR/xray"
+        SERVER_CAT_PROXY_CONFIG="$SERVER_CAT_PROXY_XRAY_DIR/config.json"
+        SERVER_CAT_PROXY_NODE_JSON="$SERVER_CAT_PROXY_XRAY_DIR/node.json"
+        SERVER_CAT_PROXY_LINK_FILE="$SERVER_CAT_PROXY_XRAY_DIR/share-link.txt"
+        server_cat_proxy_atomic_write "$SERVER_CAT_PROXY_CONFIG" \
+            "{\"inbounds\":[{\"tag\":\"scat-reality\",\"protocol\":\"vless\"}],\"outbounds\":[]}"
+        server_cat_proxy_ensure_node_json
+        server_cat_proxy_nodejson_set reality deployed true
+        confirm_strong() { return 0; }
+        docker() { return 0; }
+        server_cat_proxy_detect_public_ip() { printf "1.2.3.4\n"; }
+        server_cat_proxy_remove_reality
+        [[ "$(server_cat_proxy_inbound_get scat-reality)" == "" ]]
+        [[ "$(server_cat_proxy_nodejson_get reality deployed)" == "false" ]]
+    ' _ "$PROJECT_ROOT" "$(mktemp -d)"; then
+        pass "Reality 卸载移除 inbound 并标记未部署"
+    else
+        fail "Reality 卸载移除 inbound 并标记未部署"
+    fi
 }
 
 check_ssh_key_behavior() {
