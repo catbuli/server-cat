@@ -684,6 +684,21 @@ check_proxy_node_behavior() {
     else
         fail "Hysteria2 卸载移除 inbound 并标记未部署"
     fi
+
+    if bash -c '
+        source "$1/modules/proxy_node.sh"
+        export SERVER_CAT_PROXY_DIR="$2"
+        removed=""
+        docker() { removed="$removed $1 $2"; return 0; }
+        confirm_strong() { return 0; }
+        rollback_proxy_node
+        rg -q "rm -f server-cat-xray" <<< "$removed"
+        [[ ! -e "$SERVER_CAT_PROXY_DIR" ]]
+    ' _ "$PROJECT_ROOT" "$(mktemp -d)"; then
+        pass "代理节点回滚清理容器与配置目录"
+    else
+        fail "代理节点回滚清理容器与配置目录"
+    fi
 }
 
 check_ssh_key_behavior() {
@@ -1296,6 +1311,13 @@ assert_not_contains "modules/swap.sh" 'swapoff -a' "Swap 管理不批量停用�
 assert_not_contains "modules/firewall.sh" 'ufw allow ssh' "防火墙不再固定放行 22 端口"
 assert_not_contains "modules/firewall.sh" 'ufw allow http' "防火墙不再默认开放 HTTP"
 assert_contains_literal "modules/firewall.sh" 'ufw status numbered' "防火墙支持读取编号规则"
+assert_not_contains "modules/proxy_node.sh" 'set -e' "代理节点模块顶层不启用 errexit"
+assert_not_contains "modules/proxy_node.sh" 'pipefail' "代理节点模块顶层不启用 pipefail"
+assert_contains_literal "modules/proxy_node.sh" 'confirm_strong "REMOVE"' "代理节点卸载需要强确认"
+assert_not_contains "modules/proxy_node.sh" 'BACKUP_FUNC' "代理节点模块不声明备份钩子"
+assert_contains_literal "modules/proxy_node.sh" 'rollback_proxy_node' "代理节点模块提供回滚入口"
+assert_not_contains "modules/proxy_node.sh" 'install_docker' "代理节点模块不自动安装 Docker"
+assert_not_contains "modules/proxy_node.sh" 'ufw' "代理节点模块不修改防火墙规则"
 assert_not_contains "softwares/install_docker.sh" 'BACKUP_FUNC' "Docker 模块不再声明备份钩子"
 assert_not_contains "softwares/install_nginx.sh" 'BACKUP_FUNC' "Nginx 模块不再声明备份钩子"
 assert_not_contains "softwares/install_certbot.sh" 'BACKUP_FUNC' "Certbot 模块不再声明备份钩子"

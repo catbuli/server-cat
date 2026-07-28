@@ -698,7 +698,21 @@ server_cat_proxy_remove_hysteria2() {
 }
 
 rollback_proxy_node() {
-    return 0
+    print_warning "将卸载代理节点模块：停止并删除 Xray 容器，删除 /etc/server-cat/proxy 配置目录"
+    print_warning "不会删除已下载的 Xray 镜像"
+    confirm_strong "REMOVE" "确认回滚代理节点模块" || {
+        print_info "已取消"
+        return 0
+    }
+
+    if docker ps -a --format '{{.Names}}' 2>/dev/null |
+        grep -qx "$SERVER_CAT_PROXY_CONTAINER"; then
+        docker stop "$SERVER_CAT_PROXY_CONTAINER" > /dev/null 2>&1 || true
+        docker rm -f "$SERVER_CAT_PROXY_CONTAINER" > /dev/null 2>&1 || true
+    fi
+
+    rm -rf "$SERVER_CAT_PROXY_DIR"
+    print_success "代理节点模块已回滚"
 }
 
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
