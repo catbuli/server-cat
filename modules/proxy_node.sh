@@ -553,7 +553,70 @@ server_cat_proxy_deploy_reality() {
     print_success "分享链接："
     printf '%s\n' "$link"
 }
-server_cat_proxy_deploy_hysteria2() { return 0; }
+server_cat_proxy_deploy_hysteria2() {
+    local port sni crt key pass inbound_json ip link
+
+    server_cat_proxy_check_docker || return 1
+
+    if [[ "$(server_cat_proxy_nodejson_get hysteria2 deployed)" == "true" ]]; then
+        print_warning "Hysteria2 节点已部署，请先卸载"
+        return 0
+    fi
+
+    read -r -p "监听端口（默认 443）: " port
+    port="${port:-443}"
+    if ! is_number "$port" || [[ "$port" -lt 1 || "$port" -gt 65535 ]]; then
+        print_error "端口必须是 1 到 65535 的整数"
+        return 1
+    fi
+
+    read -r -p "TLS 证书 SNI（如 example.com）: " sni
+    [[ -z "$sni" ]] && { print_error "SNI 不能为空"; return 1; }
+    read -r -p "证书文件路径（.crt）: " crt
+    read -r -p "私钥文件路径（.key）: " key
+    if [[ ! -f "$crt" || -L "$crt" ]]; then
+        print_error "证书文件不存在或为符号链接: $crt"
+        return 1
+    fi
+    if [[ ! -f "$key" || -L "$key" ]]; then
+        print_error "私钥文件不存在或为符号链接: $key"
+        return 1
+    fi
+
+    pass=$(server_cat_proxy_gen_password)
+    inbound_json=$(server_cat_proxy_gen_hysteria2_config "$port" "$sni" "$crt" "$key" "$pass")
+
+    if ! server_cat_proxy_inbound_add "$inbound_json"; then
+        print_error "写入 config.json 失败"
+        return 1
+    fi
+
+    print_info "正在重建 Xray 容器..."
+    if ! server_cat_proxy_rebuild_container; then
+        print_error "容器重建失败，回滚配置"
+        server_cat_proxy_inbound_remove scat-hysteria2
+        return 1
+    fi
+
+    sleep 1
+    server_cat_proxy_health_check || print_warning "健康检查未通过，请排查端口占用"
+
+    server_cat_proxy_nodejson_set hysteria2 deployed true
+    server_cat_proxy_nodejson_set hysteria2 port "$port"
+    server_cat_proxy_nodejson_set hysteria2 serverName "$sni"
+    server_cat_proxy_nodejson_set hysteria2 certFile "$crt"
+    server_cat_proxy_nodejson_set hysteria2 keyFile "$key"
+    server_cat_proxy_nodejson_set hysteria2 password "$pass"
+
+    ip=$(server_cat_proxy_detect_public_ip)
+    link=$(server_cat_proxy_gen_hysteria2_link "$ip" "$port" "$sni" "$pass")
+    server_cat_proxy_refresh_link_file
+
+    print_step "部署成功"
+    print_info "SNI: $sni"
+    print_success "分享链接："
+    printf '%s\n' "$link"
+}
 server_cat_proxy_show() {
     server_cat_proxy_ensure_node_json
     print_step "已部署节点"
@@ -608,7 +671,31 @@ server_cat_proxy_remove_reality() {
     server_cat_proxy_refresh_link_file
     print_success "VLESS + Reality 节点已卸载"
 }
-server_cat_proxy_remove_hysteria2() { return 0; }
+server_cat_proxy_remove_hysteria2() {
+    if [[ "$(server_cat_proxy_nodejson_get hysteria2 deployed)" != "true" ]]; then
+        print_warning "Hysteria2 节点未部署"
+        return 0
+    fi
+
+    print_warning "将卸载 Hysteria2 节点并从 config.json 移除对应 inbound"
+    confirm_strong "REMOVE" "确认卸载 Hysteria2 节点" || {
+        print_info "已取消"
+        return 0
+    }
+
+    server_cat_proxy_inbound_remove scat-hysteria2
+
+    if [[ "$(server_cat_proxy_inbound_count)" -gt 0 ]]; then
+        server_cat_proxy_rebuild_container
+    else
+        docker stop "$SERVER_CAT_PROXY_CONTAINER" > /dev/null 2>&1 || true
+        docker rm -f "$SERVER_CAT_PROXY_CONTAINER" > /dev/null 2>&1 || true
+    fi
+
+    server_cat_proxy_nodejson_set hysteria2 deployed false
+    server_cat_proxy_refresh_link_file
+    print_success "Hysteria2 节点已卸载"
+}
 
 rollback_proxy_node() {
     return 0

@@ -645,6 +645,45 @@ check_proxy_node_behavior() {
     else
         fail "Hysteria2 配置生成与链接拼接"
     fi
+
+    if bash -c '
+        source "$1/modules/proxy_node.sh"
+        export SERVER_CAT_PROXY_DIR="$2"
+        SERVER_CAT_PROXY_XRAY_DIR="$SERVER_CAT_PROXY_DIR/xray"
+        SERVER_CAT_PROXY_CONFIG="$SERVER_CAT_PROXY_XRAY_DIR/config.json"
+        SERVER_CAT_PROXY_NODE_JSON="$SERVER_CAT_PROXY_XRAY_DIR/node.json"
+        server_cat_proxy_ensure_node_json
+        server_cat_proxy_check_docker() { return 0; }
+        read() { printf "%s\n" "8443" "example.com" "/srv/missing.crt" "/srv/missing.key"; }
+        server_cat_proxy_deploy_hysteria2 > /dev/null 2>&1
+        [[ "$(server_cat_proxy_nodejson_get hysteria2 deployed)" == "false" ]]
+    ' _ "$PROJECT_ROOT" "$(mktemp -d)"; then
+        pass "Hysteria2 部署校验证书文件存在"
+    else
+        fail "Hysteria2 部署校验证书文件存在"
+    fi
+
+    if bash -c '
+        source "$1/modules/proxy_node.sh"
+        export SERVER_CAT_PROXY_DIR="$2"
+        SERVER_CAT_PROXY_XRAY_DIR="$SERVER_CAT_PROXY_DIR/xray"
+        SERVER_CAT_PROXY_CONFIG="$SERVER_CAT_PROXY_XRAY_DIR/config.json"
+        SERVER_CAT_PROXY_NODE_JSON="$SERVER_CAT_PROXY_XRAY_DIR/node.json"
+        server_cat_proxy_atomic_write "$SERVER_CAT_PROXY_CONFIG" \
+            "{\"inbounds\":[{\"tag\":\"scat-hysteria2\",\"protocol\":\"hysteria\"}],\"outbounds\":[]}"
+        server_cat_proxy_ensure_node_json
+        server_cat_proxy_nodejson_set hysteria2 deployed true
+        confirm_strong() { return 0; }
+        docker() { return 0; }
+        server_cat_proxy_detect_public_ip() { printf "1.2.3.4\n"; }
+        server_cat_proxy_remove_hysteria2
+        [[ "$(server_cat_proxy_inbound_get scat-hysteria2)" == "" ]]
+        [[ "$(server_cat_proxy_nodejson_get hysteria2 deployed)" == "false" ]]
+    ' _ "$PROJECT_ROOT" "$(mktemp -d)"; then
+        pass "Hysteria2 卸载移除 inbound 并标记未部署"
+    else
+        fail "Hysteria2 卸载移除 inbound 并标记未部署"
+    fi
 }
 
 check_ssh_key_behavior() {
