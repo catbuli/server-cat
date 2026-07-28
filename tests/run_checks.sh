@@ -513,6 +513,25 @@ check_proxy_node_behavior() {
     else
         fail "代理节点按 inbound 计算端口与证书挂载参数"
     fi
+
+    if bash -c '
+        source "$1/modules/proxy_node.sh"
+        export SERVER_CAT_PROXY_DIR="$2"
+        SERVER_CAT_PROXY_NODE_JSON="$SERVER_CAT_PROXY_DIR/node.json"
+        server_cat_proxy_ensure_node_json
+        server_cat_proxy_nodejson_set reality deployed false
+        [[ "$(server_cat_proxy_nodejson_get reality deployed)" == "false" ]]
+        server_cat_proxy_nodejson_set reality deployed true
+        server_cat_proxy_nodejson_set reality port 443
+        server_cat_proxy_nodejson_set reality uuid "abc-123"
+        [[ "$(server_cat_proxy_nodejson_get reality deployed)" == "true" ]]
+        [[ "$(server_cat_proxy_nodejson_get reality port)" == "443" ]]
+        [[ "$(server_cat_proxy_nodejson_get reality uuid)" == "abc-123" ]]
+    ' _ "$PROJECT_ROOT" "$(mktemp -d)"; then
+        pass "代理节点状态按字段读写 node.json"
+    else
+        fail "代理节点状态按字段读写 node.json"
+    fi
 }
 
 check_ssh_key_behavior() {

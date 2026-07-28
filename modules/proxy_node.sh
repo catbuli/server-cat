@@ -188,6 +188,74 @@ server_cat_proxy_rebuild_container() {
         "$SERVER_CAT_PROXY_IMAGE" > /dev/null
 }
 
+# nodejson_set <proto> <field> <value>
+# value 为数字/布尔/字符串；字符串会自动加引号
+server_cat_proxy_nodejson_set() {
+    local proto="$1"
+    local field="$2"
+    local value="$3"
+    local raw
+    local tmp
+
+    server_cat_proxy_ensure_node_json
+    case "$value" in
+        true|false) raw="$value" ;;
+        ''|*[!0-9-]*) raw=$(jq -R . <<< "$value") ;;
+        *) raw="$value" ;;
+    esac
+
+    tmp=$(mktemp "$(dirname "$SERVER_CAT_PROXY_NODE_JSON")/.node.XXXXXX") || return 1
+    if ! jq --arg p "$proto" --arg f "$field" --argjson v "$raw" \
+        '.[$p][$f] = $v' "$SERVER_CAT_PROXY_NODE_JSON" > "$tmp"; then
+        rm -f "$tmp"
+        return 1
+    fi
+    chmod 0600 "$tmp"
+    mv "$tmp" "$SERVER_CAT_PROXY_NODE_JSON"
+}
+
+# nodejson_get <proto> <field>，输出原始值（字符串无引号）
+server_cat_proxy_nodejson_get() {
+    local proto="$1"
+    local field="$2"
+
+    [[ -f "$SERVER_CAT_PROXY_NODE_JSON" ]] || return 0
+    jq -r --arg p "$proto" --arg f "$field" '.[$p][$f] // empty' \
+        "$SERVER_CAT_PROXY_NODE_JSON" 2>/dev/null
+}
+
+# 等待容器 Running 且至少一个 inbound 端口在监听
+server_cat_proxy_health_check() {
+    local proto port check
+
+    if ! docker ps --format '{{.Names}}' 2>/dev/null |
+        grep -qx "$SERVER_CAT_PROXY_CONTAINER"; then
+        print_error "容器 $SERVER_CAT_PROXY_CONTAINER 未运行"
+        return 1
+    fi
+
+    server_cat_proxy_config_exists || return 0
+    while IFS=$'\t' read -r proto port; do
+        [[ -z "$port" ]] && continue
+        if [[ "$proto" == "hysteria" ]]; then
+            check="udp"
+        else
+            check="tcp"
+        fi
+        if ! ss -l${check}n 2>/dev/null | awk -v p=":$port" '$2 ~ p { found=1 } END { exit !found }'; then
+            print_warning "端口 $port/$check 暂未监听，容器可能仍在启动"
+            return 1
+        fi
+    done < <(jq -r '.inbounds[]? | select(.port) | [.protocol, (.port|tostring)] | @tsv' \
+        "$SERVER_CAT_PROXY_CONFIG" 2>/dev/null)
+    return 0
+}
+
+server_cat_proxy_write_link_file() {
+    local content="$1"
+    server_cat_proxy_atomic_write "$SERVER_CAT_PROXY_LINK_FILE" "$content" 0600
+}
+
 function configure_proxy_node() {
     local choice
 
