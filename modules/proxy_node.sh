@@ -89,6 +89,51 @@ server_cat_proxy_ensure_node_json() {
         '{"reality":{"deployed":false},"hysteria2":{"deployed":false}}'
 }
 
+# 按 tag 读取整个 inbound 对象，不存在输出空串
+server_cat_proxy_inbound_get() {
+    local tag="$1"
+
+    server_cat_proxy_config_exists || return 0
+    jq -c --arg t "$tag" '.inbounds[] | select(.tag == $t)' "$SERVER_CAT_PROXY_CONFIG" 2>/dev/null
+}
+
+server_cat_proxy_inbound_count() {
+    server_cat_proxy_config_exists || { printf '0\n'; return 0; }
+    jq '.inbounds | length' "$SERVER_CAT_PROXY_CONFIG" 2>/dev/null
+}
+
+# inbound_json 是单个 inbound 对象的 JSON 字符串（含 tag）
+server_cat_proxy_inbound_add() {
+    local inbound_json="$1"
+    local tmp
+
+    server_cat_proxy_ensure_config
+    tmp=$(mktemp "$(dirname "$SERVER_CAT_PROXY_CONFIG")/.inbound.XXXXXX") || return 1
+    if ! jq --argjson nb "$inbound_json" \
+        '(.inbounds // []) |= (. | map(select(.tag != $nb.tag)) + [$nb])' \
+        "$SERVER_CAT_PROXY_CONFIG" > "$tmp"; then
+        rm -f "$tmp"
+        return 1
+    fi
+    chmod 0600 "$tmp"
+    mv "$tmp" "$SERVER_CAT_PROXY_CONFIG"
+}
+
+server_cat_proxy_inbound_remove() {
+    local tag="$1"
+    local tmp
+
+    server_cat_proxy_config_exists || return 0
+    tmp=$(mktemp "$(dirname "$SERVER_CAT_PROXY_CONFIG")/.inbound.XXXXXX") || return 1
+    if ! jq --arg t "$tag" '.inbounds |= map(select(.tag != $t))' \
+        "$SERVER_CAT_PROXY_CONFIG" > "$tmp"; then
+        rm -f "$tmp"
+        return 1
+    fi
+    chmod 0600 "$tmp"
+    mv "$tmp" "$SERVER_CAT_PROXY_CONFIG"
+}
+
 function configure_proxy_node() {
     local choice
 

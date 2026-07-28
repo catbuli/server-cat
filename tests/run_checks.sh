@@ -469,6 +469,26 @@ check_proxy_node_behavior() {
     else
         fail "代理节点部署前检查 Docker 是否可用"
     fi
+
+    if bash -c '
+        source "$1/modules/proxy_node.sh"
+        export SERVER_CAT_PROXY_DIR="$2"
+        SERVER_CAT_PROXY_CONFIG="$SERVER_CAT_PROXY_DIR/config.json"
+        server_cat_proxy_ensure_config
+        server_cat_proxy_inbound_add "{\"tag\":\"scat-reality\",\"protocol\":\"vless\"}"
+        server_cat_proxy_inbound_add "{\"tag\":\"scat-hysteria2\",\"protocol\":\"hysteria\"}"
+        [[ "$(server_cat_proxy_inbound_count)" == "2" ]]
+        [[ "$(server_cat_proxy_inbound_get scat-reality | jq -r .protocol)" == "vless" ]]
+        [[ "$(server_cat_proxy_inbound_get scat-reality | jq -r .tag)" == "scat-reality" ]]
+        server_cat_proxy_inbound_remove scat-reality
+        [[ "$(server_cat_proxy_inbound_count)" == "1" ]]
+        [[ "$(server_cat_proxy_inbound_get scat-reality)" == "" ]]
+        [[ "$(server_cat_proxy_inbound_get scat-hysteria2 | jq -r .protocol)" == "hysteria" ]]
+    ' _ "$PROJECT_ROOT" "$(mktemp -d)"; then
+        pass "代理节点按 tag 增删查 inbound"
+    else
+        fail "代理节点按 tag 增删查 inbound"
+    fi
 }
 
 check_ssh_key_behavior() {
