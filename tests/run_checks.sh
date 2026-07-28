@@ -489,6 +489,30 @@ check_proxy_node_behavior() {
     else
         fail "代理节点按 tag 增删查 inbound"
     fi
+
+    if bash -c '
+        source "$1/modules/proxy_node.sh"
+        export SERVER_CAT_PROXY_DIR="$2"
+        SERVER_CAT_PROXY_CONFIG="$SERVER_CAT_PROXY_DIR/config.json"
+        server_cat_proxy_atomic_write "$SERVER_CAT_PROXY_CONFIG" "{
+            \"inbounds\":[
+                {\"tag\":\"scat-reality\",\"protocol\":\"vless\",\"port\":443},
+                {\"tag\":\"scat-hysteria2\",\"protocol\":\"hysteria\",\"port\":8443,
+                 \"streamSettings\":{\"tlsSettings\":{\"certificates\":[{\"certificateFile\":\"/tmp/a.crt\",\"keyFile\":\"/tmp/a.key\"}]}}}
+            ],
+            \"outbounds\":[]
+        }"
+        ports=$(server_cat_proxy_compute_port_args)
+        rg -q "443:443/tcp" <<< "$ports"
+        rg -q "8443:8443/udp" <<< "$ports"
+        mounts=$(server_cat_proxy_compute_volume_args)
+        rg -q "/tmp/a.crt:/tmp/a.crt:ro" <<< "$mounts"
+        rg -q "/tmp/a.key:/tmp/a.key:ro" <<< "$mounts"
+    ' _ "$PROJECT_ROOT" "$(mktemp -d)"; then
+        pass "代理节点按 inbound 计算端口与证书挂载参数"
+    else
+        fail "代理节点按 inbound 计算端口与证书挂载参数"
+    fi
 }
 
 check_ssh_key_behavior() {

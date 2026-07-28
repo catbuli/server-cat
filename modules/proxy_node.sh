@@ -134,6 +134,60 @@ server_cat_proxy_inbound_remove() {
     mv "$tmp" "$SERVER_CAT_PROXY_CONFIG"
 }
 
+# 输出多行 "-p host:container/proto" 参数；协议无 port 字段则跳过
+server_cat_proxy_compute_port_args() {
+    server_cat_proxy_config_exists || return 0
+    jq -r '
+        .inbounds[]?
+        | select(.port)
+        | (.protocol) as $p
+        | (.port) as $port
+        | (if $p == "hysteria" then "udp" else "tcp" end) as $proto
+        | "-p \($port):\($port)/\($proto)"
+    ' "$SERVER_CAT_PROXY_CONFIG" 2>/dev/null
+}
+
+# 输出多行 "-v src:dst:ro" 参数，从 hysteria inbound 的 tls 证书路径推导
+server_cat_proxy_compute_volume_args() {
+    local cert key
+
+    server_cat_proxy_config_exists || return 0
+    while IFS=$'\t' read -r cert key; do
+        [[ -n "$cert" ]] && printf -- '-v %s:%s:ro\n' "$cert" "$cert"
+        [[ -n "$key" ]] && printf -- '-v %s:%s:ro\n' "$key" "$key"
+    done < <(jq -r '
+        .inbounds[]?
+        | select(.protocol == "hysteria")
+        | .streamSettings.tlsSettings.certificates[]?
+        | [.certificateFile // "", .keyFile // ""]
+        | @tsv
+    ' "$SERVER_CAT_PROXY_CONFIG" 2>/dev/null)
+}
+
+server_cat_proxy_rebuild_container() {
+    local -a port_args
+    local -a volume_args
+    local line
+
+    while IFS= read -r line; do
+        [[ -n "$line" ]] && port_args+=("$line")
+    done < <(server_cat_proxy_compute_port_args)
+
+    while IFS= read -r line; do
+        [[ -n "$line" ]] && volume_args+=("$line")
+    done < <(server_cat_proxy_compute_volume_args)
+
+    docker rm -f "$SERVER_CAT_PROXY_CONTAINER" > /dev/null 2>&1 || true
+
+    docker run -d \
+        --name "$SERVER_CAT_PROXY_CONTAINER" \
+        --restart unless-stopped \
+        -v "$SERVER_CAT_PROXY_CONFIG:/etc/xray/config.json:ro" \
+        "${volume_args[@]}" \
+        "${port_args[@]}" \
+        "$SERVER_CAT_PROXY_IMAGE" > /dev/null
+}
+
 function configure_proxy_node() {
     local choice
 
