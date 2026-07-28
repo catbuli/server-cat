@@ -532,6 +532,26 @@ check_proxy_node_behavior() {
     else
         fail "代理节点状态按字段读写 node.json"
     fi
+
+    if bash -c '
+        source "$1/modules/proxy_node.sh"
+        server_cat_proxy_gen_uuid() { printf "11111111-1111-1111-1111-111111111111\n"; }
+        server_cat_proxy_gen_x25519() { printf "PRIVKEY123\tPUBKEY456\n"; }
+        server_cat_proxy_gen_short_ids() { printf "aa11bb22\ncc33dd44\n"; }
+        cfg=$(server_cat_proxy_gen_reality_config 443 "www.microsoft.com:443")
+        echo "$cfg" | jq -e ".port == 443" > /dev/null
+        echo "$cfg" | jq -e ".streamSettings.realitySettings.privateKey == \"PRIVKEY123\"" > /dev/null
+        echo "$cfg" | jq -e ".streamSettings.realitySettings.publicKey == \"PUBKEY456\"" > /dev/null
+        echo "$cfg" | jq -e ".streamSettings.realitySettings.serverNames[0] == \"www.microsoft.com\"" > /dev/null
+        link=$(server_cat_proxy_gen_reality_link "1.2.3.4" 443 "www.microsoft.com:443" "11111111-1111-1111-1111-111111111111" "PUBKEY456" "aa11bb22")
+        [[ "$link" == vless://11111111-1111-1111-1111-111111111111@1.2.3.4:443* ]]
+        [[ "$link" == *pbk=PUBKEY456* ]]
+        [[ "$link" == *sni=www.microsoft.com* ]]
+    ' _ "$PROJECT_ROOT"; then
+        pass "Reality 配置生成与分享链接拼接"
+    else
+        fail "Reality 配置生成与分享链接拼接"
+    fi
 }
 
 check_ssh_key_behavior() {

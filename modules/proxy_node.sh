@@ -256,6 +256,101 @@ server_cat_proxy_write_link_file() {
     server_cat_proxy_atomic_write "$SERVER_CAT_PROXY_LINK_FILE" "$content" 0600
 }
 
+# 通过临时 xray 容器生成 UUID
+server_cat_proxy_gen_uuid() {
+    docker run --rm "$SERVER_CAT_PROXY_IMAGE" xray uuid 2>/dev/null | tr -d '[:space:]'
+}
+
+# 通过临时 xray 容器生成 x25519 密钥对，输出 "priv\tpub"
+server_cat_proxy_gen_x25519() {
+    local output priv pub
+
+    output=$(docker run --rm "$SERVER_CAT_PROXY_IMAGE" xray x25519 2>/dev/null)
+    priv=$(printf '%s\n' "$output" | awk -F': ' '/Private key/{print $2}')
+    pub=$(printf '%s\n' "$output" | awk -F': ' '/Public key/{print $2}')
+    printf '%s\t%s\n' "$priv" "$pub"
+}
+
+# 生成 8 位与 16 位十六进制 shortId，输出两行
+server_cat_proxy_gen_short_ids() {
+    printf '%s\n' "$(head -c 4 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+    printf '%s\n' "$(head -c 8 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+}
+
+# 生成 Reality 参数 JSON（供落 node.json），不含 deployed 字段
+# 参数: port dest uuid priv pub short1 short2
+server_cat_proxy_reality_params_json() {
+    jq -n \
+        --argjson port "$1" \
+        --arg dest "$2" \
+        --arg uuid "$3" \
+        --arg priv "$4" \
+        --arg pub "$5" \
+        --arg s1 "$6" \
+        --arg s2 "$7" \
+        '{port:$port, dest:$dest, serverName:($dest|sub(":.*";"")), uuid:$uuid,
+          privateKey:$priv, publicKey:$pub, shortIds:[$s1,$s2]}'
+}
+
+# 生成 Reality inbound JSON（含 tag）
+# 参数: port dest
+server_cat_proxy_gen_reality_config() {
+    local port="$1"
+    local dest="$2"
+    local host="${dest%%:*}"
+    local uuid priv pub short1 short2 params_json
+
+    uuid=$(server_cat_proxy_gen_uuid)
+    IFS=$'\t' read -r priv pub < <(server_cat_proxy_gen_x25519)
+    { read -r short1; read -r short2; } < <(server_cat_proxy_gen_short_ids)
+
+    # 把参数写入临时文件供部署后落 node.json
+    server_cat_proxy_init_dirs
+    server_cat_proxy_reality_params_json "$port" "$dest" "$uuid" "$priv" "$pub" "$short1" "$short2" > \
+        "$SERVER_CAT_PROXY_XRAY_DIR/.reality.params.tmp"
+    chmod 0600 "$SERVER_CAT_PROXY_XRAY_DIR/.reality.params.tmp"
+
+    jq -n \
+        --argjson port "$port" \
+        --arg uuid "$uuid" \
+        --arg priv "$priv" \
+        --arg pub "$pub" \
+        --arg dest "$dest" \
+        --arg host "$host" \
+        --arg s1 "$short1" \
+        --arg s2 "$short2" \
+        '{
+            tag: "scat-reality",
+            listen: "0.0.0.0",
+            port: $port,
+            protocol: "vless",
+            settings: { clients: [{ id: $uuid, flow: "xtls-rprx-vision" }], decryption: "none" },
+            streamSettings: {
+                network: "tcp",
+                security: "reality",
+                realitySettings: {
+                    show: false,
+                    dest: $dest,
+                    xver: 0,
+                    serverNames: [$host],
+                    privateKey: $priv,
+                    publicKey: $pub,
+                    shortIds: [$s1, $s2],
+                    settings: { fingerprint: "chrome", serverName: $host, spiderX: "" }
+                }
+            }
+        }'
+}
+
+# 参数: ip port dest uuid pubkey sid
+server_cat_proxy_gen_reality_link() {
+    local ip="$1" port="$2" dest="$3" uuid="$4" pub="$5" sid="${6:-}"
+    local host="${dest%%:*}"
+
+    printf 'vless://%s@%s:%s?encryption=none&flow=xtls-rprx-vision&security=reality&sni=%s&fp=chrome&pbk=%s&sid=%s&type=tcp&host=%s&headerType=none#SCat-Reality\n' \
+        "$uuid" "$ip" "$port" "$host" "$pub" "$sid" "$host"
+}
+
 function configure_proxy_node() {
     local choice
 
