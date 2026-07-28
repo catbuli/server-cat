@@ -304,11 +304,13 @@ server_cat_proxy_gen_reality_config() {
     IFS=$'\t' read -r priv pub < <(server_cat_proxy_gen_x25519)
     { read -r short1; read -r short2; } < <(server_cat_proxy_gen_short_ids)
 
-    # 把参数写入临时文件供部署后落 node.json
+    # 把参数写入临时文件供部署后落 node.json（路径基于可被测试覆盖的 NODE_JSON 派生）
     server_cat_proxy_init_dirs
+    local _params_dir
+    _params_dir=$(dirname "$SERVER_CAT_PROXY_NODE_JSON")
     server_cat_proxy_reality_params_json "$port" "$dest" "$uuid" "$priv" "$pub" "$short1" "$short2" > \
-        "$SERVER_CAT_PROXY_XRAY_DIR/.reality.params.tmp"
-    chmod 0600 "$SERVER_CAT_PROXY_XRAY_DIR/.reality.params.tmp"
+        "$_params_dir/.reality.params.tmp"
+    chmod 0600 "$_params_dir/.reality.params.tmp"
 
     jq -n \
         --argjson port "$port" \
@@ -382,7 +384,104 @@ function configure_proxy_node() {
 }
 
 # 占位实现，后续 Task 填充
-server_cat_proxy_deploy_reality() { return 0; }
+server_cat_proxy_deploy_reality() {
+    local port dest_choice dest inbound_json ip uuid pub short1 link
+
+    server_cat_proxy_check_docker || return 1
+
+    if [[ "$(server_cat_proxy_nodejson_get reality deployed)" == "true" ]]; then
+        print_warning "VLESS + Reality 节点已部署，请先卸载"
+        return 0
+    fi
+
+    read -r -p "监听端口（默认 443）: " port
+    port="${port:-443}"
+    if ! is_number "$port" || [[ "$port" -lt 1 || "$port" -gt 65535 ]]; then
+        print_error "端口必须是 1 到 65535 的整数"
+        return 1
+    fi
+
+    dest_choice=$(select_menu "选择 Reality 伪装目标" "$BLUE" "取消" \
+        "伪装目标必须支持 TLS1.3 与 X25519。" \
+        "www.microsoft.com:443" \
+        "www.cloudflare.com:443" \
+        "www.amazon.com:443" \
+        "aws.amazon.com:443" \
+        "www.samsung.com:443" \
+        "www.nvidia.com:443" \
+        "www.amd.com:443" \
+        "www.intel.com:443" \
+        "www.sony.com:443" \
+        "dl.google.com:443")
+    case "$dest_choice" in
+        1) dest="www.microsoft.com:443" ;;
+        2) dest="www.cloudflare.com:443" ;;
+        3) dest="www.amazon.com:443" ;;
+        4) dest="aws.amazon.com:443" ;;
+        5) dest="www.samsung.com:443" ;;
+        6) dest="www.nvidia.com:443" ;;
+        7) dest="www.amd.com:443" ;;
+        8) dest="www.intel.com:443" ;;
+        9) dest="www.sony.com:443" ;;
+        10) dest="dl.google.com:443" ;;
+        *) print_info "已取消"; return 0 ;;
+    esac
+
+    print_info "正在生成 UUID 与 x25519 密钥对（需拉取 Xray 镜像，首次较慢）..."
+    inbound_json=$(server_cat_proxy_gen_reality_config "$port" "$dest")
+    if [[ -z "$inbound_json" ]]; then
+        print_error "Reality 配置生成失败"
+        rm -f "$(dirname "$SERVER_CAT_PROXY_NODE_JSON")/.reality.params.tmp"
+        return 1
+    fi
+
+    if ! server_cat_proxy_inbound_add "$inbound_json"; then
+        print_error "写入 config.json 失败"
+        rm -f "$(dirname "$SERVER_CAT_PROXY_NODE_JSON")/.reality.params.tmp"
+        return 1
+    fi
+
+    print_info "正在重建 Xray 容器..."
+    if ! server_cat_proxy_rebuild_container; then
+        print_error "容器重建失败，回滚配置"
+        server_cat_proxy_inbound_remove scat-reality
+        rm -f "$(dirname "$SERVER_CAT_PROXY_NODE_JSON")/.reality.params.tmp"
+        return 1
+    fi
+
+    sleep 1
+    server_cat_proxy_health_check || print_warning "健康检查未通过，请检查端口是否被占用；配置已保留，可手动排查"
+
+    # 落 node.json：把 params 与 deployed:true 合并到 reality 节点
+    local _params_file
+    _params_file="$(dirname "$SERVER_CAT_PROXY_NODE_JSON")/.reality.params.tmp"
+    if [[ -f "$_params_file" ]]; then
+        local params_json merge_tmp
+        params_json=$(cat "$_params_file")
+        server_cat_proxy_ensure_node_json
+        merge_tmp=$(mktemp "$(dirname "$SERVER_CAT_PROXY_NODE_JSON")/.merge.XXXXXX")
+        if jq --argjson params "$params_json" '.reality = ($params + {deployed:true})' \
+            "$SERVER_CAT_PROXY_NODE_JSON" > "$merge_tmp"; then
+            chmod 0600 "$merge_tmp"
+            mv "$merge_tmp" "$SERVER_CAT_PROXY_NODE_JSON"
+        else
+            rm -f "$merge_tmp"
+        fi
+        rm -f "$_params_file"
+    fi
+
+    ip=$(server_cat_proxy_detect_public_ip)
+    uuid=$(server_cat_proxy_nodejson_get reality uuid)
+    pub=$(server_cat_proxy_nodejson_get reality publicKey)
+    short1=$(server_cat_proxy_nodejson_get reality shortIds | jq -r '.[0]' 2>/dev/null)
+    link=$(server_cat_proxy_gen_reality_link "$ip" "$port" "$dest" "$uuid" "$pub" "$short1")
+
+    server_cat_proxy_write_link_file "$link"
+    print_step "部署成功"
+    print_info "伪装目标: $dest"
+    print_success "分享链接："
+    printf '%s\n' "$link"
+}
 server_cat_proxy_deploy_hysteria2() { return 0; }
 server_cat_proxy_show() { return 0; }
 server_cat_proxy_remove_reality() { return 0; }

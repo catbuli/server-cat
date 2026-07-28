@@ -552,6 +552,35 @@ check_proxy_node_behavior() {
     else
         fail "Reality 配置生成与分享链接拼接"
     fi
+
+    if bash -c '
+        source "$1/modules/proxy_node.sh"
+        export SERVER_CAT_PROXY_DIR="$2"
+        SERVER_CAT_PROXY_XRAY_DIR="$SERVER_CAT_PROXY_DIR/xray"
+        SERVER_CAT_PROXY_CONFIG="$SERVER_CAT_PROXY_XRAY_DIR/config.json"
+        SERVER_CAT_PROXY_NODE_JSON="$SERVER_CAT_PROXY_XRAY_DIR/node.json"
+        SERVER_CAT_PROXY_LINK_FILE="$SERVER_CAT_PROXY_XRAY_DIR/share-link.txt"
+        select_menu() { printf "1\n"; }
+        server_cat_proxy_gen_uuid() { printf "uuid-fake\n"; }
+        server_cat_proxy_gen_x25519() { printf "PRIV\tPUB\n"; }
+        server_cat_proxy_gen_short_ids() { printf "11\n22\n"; }
+        docker() {
+            case "$1 $2" in
+                "run -d") printf "container-id\n" ;;
+                "ps --format") printf "server-cat-xray\n" ;;
+                *) return 0 ;;
+            esac
+        }
+        ss() { printf "LISTEN 0 0 *:443 *:* users:((\"xray\"))\n"; }
+        server_cat_proxy_detect_public_ip() { printf "1.2.3.4\n"; }
+        server_cat_proxy_deploy_reality
+        rg -q "scat-reality" "$SERVER_CAT_PROXY_CONFIG"
+        [[ "$(server_cat_proxy_nodejson_get reality deployed)" == "true" ]]
+    ' _ "$PROJECT_ROOT" "$(mktemp -d)"; then
+        pass "Reality 部署串联配置写入与容器重建"
+    else
+        fail "Reality 部署串联配置写入与容器重建"
+    fi
 }
 
 check_ssh_key_behavior() {
