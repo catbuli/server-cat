@@ -604,6 +604,47 @@ check_proxy_node_behavior() {
     else
         fail "Reality 卸载移除 inbound 并标记未部署"
     fi
+
+    if bash -c '
+        source "$1/modules/proxy_node.sh"
+        export SERVER_CAT_PROXY_DIR="$2"
+        SERVER_CAT_PROXY_XRAY_DIR="$SERVER_CAT_PROXY_DIR/xray"
+        SERVER_CAT_PROXY_NODE_JSON="$SERVER_CAT_PROXY_XRAY_DIR/node.json"
+        SERVER_CAT_PROXY_LINK_FILE="$SERVER_CAT_PROXY_XRAY_DIR/share-link.txt"
+        server_cat_proxy_ensure_node_json
+        server_cat_proxy_nodejson_set reality deployed true
+        server_cat_proxy_nodejson_set reality port 443
+        server_cat_proxy_nodejson_set reality uuid "u-1"
+        server_cat_proxy_nodejson_set reality publicKey "PUB"
+        server_cat_proxy_nodejson_set reality dest "www.microsoft.com:443"
+        server_cat_proxy_nodejson_set reality shortIds "[\"aa\",\"bb\"]"
+        server_cat_proxy_nodejson_set hysteria2 deployed false
+        server_cat_proxy_detect_public_ip() { printf "1.2.3.4\n"; }
+        server_cat_proxy_refresh_link_file
+        rg -q "^vless://u-1@" "$SERVER_CAT_PROXY_LINK_FILE"
+        ! rg -q "hysteria2://" "$SERVER_CAT_PROXY_LINK_FILE"
+    ' _ "$PROJECT_ROOT" "$(mktemp -d)"; then
+        pass "链接文件只列出已部署节点"
+    else
+        fail "链接文件只列出已部署节点"
+    fi
+
+    if bash -c '
+        source "$1/modules/proxy_node.sh"
+        cfg=$(server_cat_proxy_gen_hysteria2_config 8443 "example.com" "/srv/cert.crt" "/srv/cert.key" "secretpass")
+        echo "$cfg" | jq -e ".port == 8443" > /dev/null
+        echo "$cfg" | jq -e ".protocol == \"hysteria\"" > /dev/null
+        echo "$cfg" | jq -e ".settings.version == 2" > /dev/null
+        echo "$cfg" | jq -e ".streamSettings.tlsSettings.certificates[0].certificateFile == \"/srv/cert.crt\"" > /dev/null
+        echo "$cfg" | jq -e ".settings.clients[0].auth == \"secretpass\"" > /dev/null
+        link=$(server_cat_proxy_gen_hysteria2_link "1.2.3.4" 8443 "example.com" "secretpass")
+        [[ "$link" == hysteria2://secretpass@1.2.3.4:8443* ]]
+        [[ "$link" == *insecure=0* ]]
+    ' _ "$PROJECT_ROOT"; then
+        pass "Hysteria2 配置生成与链接拼接"
+    else
+        fail "Hysteria2 配置生成与链接拼接"
+    fi
 }
 
 check_ssh_key_behavior() {

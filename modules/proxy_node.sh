@@ -368,6 +368,34 @@ server_cat_proxy_gen_hysteria2_link() {
         "$pass" "$ip" "$port" "$sni"
 }
 
+# 参数: port serverName crt key password
+server_cat_proxy_gen_hysteria2_config() {
+    local port="$1" sni="$2" crt="$3" key="$4" pass="$5"
+
+    jq -n \
+        --argjson port "$port" \
+        --arg sni "$sni" \
+        --arg crt "$crt" \
+        --arg key "$key" \
+        --arg pass "$pass" \
+        '{
+            tag: "scat-hysteria2",
+            listen: "::",
+            port: $port,
+            protocol: "hysteria",
+            settings: { version: 2, clients: [{ auth: $pass }] },
+            streamSettings: {
+                network: "tcp",
+                security: "tls",
+                tlsSettings: {
+                    serverName: $sni,
+                    alpn: ["h3"],
+                    certificates: [{ certificateFile: $crt, keyFile: $key, usage: "encipherment" }]
+                }
+            }
+        }'
+}
+
 # 按 node.json 当前状态重新拼出所有已部署节点的链接并写回 share-link.txt
 server_cat_proxy_refresh_link_file() {
     local links=""
